@@ -1,9 +1,9 @@
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  signOut, 
-  FirebaseError
+  signOut
 } from 'firebase/auth';
+import { FirebaseError } from 'firebase/app';
 import { ref, set } from 'firebase/database';
 import { auth, db } from '../firebase';
 
