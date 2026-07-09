@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--color-indigo-500);
+  --color-accent: var(--color-purple-600);
+  --color-surface-light: var(--color-slate-50);
+  --color-surface-dark: var(--color-slate-900);
+
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius-card: var(--radius-xl);
+  --radius-input: var(--radius-lg);
+}
+
+@layer base {
+  body {
+    @apply bg-surface-light text-slate-900 font-sans antialiased;
+  }
+}
