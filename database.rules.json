@@ -1,0 +1,55 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('role').val() == 'Admin')",
+        ".write": "auth != null && (\n          (auth.uid == $uid && !newData.child('role').exists() && !newData.child('campId').exists())\n          || root.child('users').child(auth.uid).child('role').val() == 'Admin'\n        )"
+      }
+    },
+
+    "masters": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'Admin'"
+    },
+
+    "transactions": {
+      "donation_request": {
+        "$id": {
+          ".read": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n          )",
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || (\n              root.child('users').child(auth.uid).child('role').val() == 'Manager'\n              && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n              && newData.child('status').val() != 'Closed'\n              && newData.child('status').val() != 'Unfulfilled'\n            )\n          )"
+        }
+      }
+    },
+
+    "donor_history": {
+      "$donorUid": {
+        ".read": "auth != null && (auth.uid == $donorUid || root.child('users').child(auth.uid).child('role').val() != 'User')",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() != 'User'"
+      }
+    },
+
+    "comments": {
+      "$transactionId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+
+    "attachments": {
+      "$transactionId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+
+    "auditLogs": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'Admin'",
+      ".write": "auth != null"
+    },
+
+    "settings": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'Admin'"
+    }
+  }
+}
