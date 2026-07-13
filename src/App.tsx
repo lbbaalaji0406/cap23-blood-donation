@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppShell } from './components/AppShell';
 import { LoginScreen } from './components/LoginScreen';
 import { SignupScreen } from './components/SignupScreen';
+import { MastersRouter } from './components/Masters/MastersRouter';
 
 // Stub components for Day 1
 const StubPage = ({ title }: { title: string }) => (
@@ -26,7 +27,7 @@ const App = () => {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
               <Route path="/dashboard" element={<StubPage title="Dashboard" />} />
-              <Route path="/masters/*" element={<StubPage title="Master Data Management" />} />
+              <Route path="/masters/*" element={<MastersRouter />} />
               <Route path="/requests/*" element={<StubPage title="Donation Requests" />} />
               <Route path="/history" element={<StubPage title="My Donation History" />} />
               <Route path="/reports" element={<StubPage title="Reports" />} />

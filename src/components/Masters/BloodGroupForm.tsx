@@ -1,0 +1,164 @@
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthProvider';
+import { useRTDB } from '../../hooks/useRTDB';
+import type { BloodGroup } from '../../services/masterService';
+import { saveBloodGroup, bloodGroupCodes } from '../../services/masterService';
+import { ArrowLeft, Save } from 'lucide-react';
+
+export const BloodGroupForm = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { profile } = useAuth();
+  const isNew = !id;
+
+  // We fetch all to check existing and also to populate the current one if editing
+  const { data: allGroups, loading } = useRTDB<Record<string, BloodGroup>>('masters/blood_group');
+  
+  const [formData, setFormData] = useState<Partial<BloodGroup>>({
+    name: '',
+    code: 'A+',
+    active: true,
+    compatibleRecipients: []
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isNew && allGroups && id && allGroups[id]) {
+      setFormData(allGroups[id]);
+    }
+  }, [allGroups, id, isNew]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    
+    if (!bloodGroupCodes.includes(formData.code || '')) {
+      setError(`Invalid Blood Group Code. Must be one of: ${bloodGroupCodes.join(', ')}`);
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: BloodGroup = {
+        name: formData.name || '',
+        code: formData.code || '',
+        active: formData.active ?? true,
+        compatibleRecipients: formData.compatibleRecipients || [],
+        createdAt: formData.createdAt || new Date().toISOString(),
+        createdBy: formData.createdBy || profile.email
+      };
+
+      await saveBloodGroup(payload);
+      navigate('/masters/blood-group');
+    } catch (err: any) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  const handleCheckbox = (code: string) => {
+    const current = formData.compatibleRecipients || [];
+    if (current.includes(code)) {
+      setFormData({ ...formData, compatibleRecipients: current.filter(c => c !== code) });
+    } else {
+      setFormData({ ...formData, compatibleRecipients: [...current, code] });
+    }
+  };
+
+  if (loading && !isNew) return <div className="p-6">Loading...</div>;
+
+  return (
+    <div className="flex flex-col h-full bg-slate-50">
+      <div className="p-6 border-b border-slate-200 bg-white flex items-center gap-4">
+        <Link to="/masters/blood-group" className="p-2 -ml-2 text-slate-400 hover:text-slate-900 rounded-full hover:bg-slate-100 transition-colors">
+          <ArrowLeft size={20} />
+        </Link>
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">{isNew ? 'New Blood Group' : 'Edit Blood Group'}</h2>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto p-6">
+        <form onSubmit={handleSubmit} className="max-w-2xl bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm font-medium">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">Code</label>
+              <select
+                required
+                disabled={!isNew}
+                value={formData.code}
+                onChange={e => setFormData({ ...formData, code: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary disabled:bg-slate-50 disabled:text-slate-500"
+              >
+                {bloodGroupCodes.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {!isNew && <p className="text-xs text-slate-500">Code cannot be changed after creation.</p>}
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700">Name</label>
+              <input
+                type="text"
+                required
+                value={formData.name || ''}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
+                placeholder="e.g. A Positive"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-sm font-medium text-slate-700">Compatible Recipients</label>
+            <p className="text-xs text-slate-500 mb-2">Select which blood groups can safely receive this blood type.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {bloodGroupCodes.map(code => (
+                <label key={code} className="flex items-center gap-2 p-2 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={(formData.compatibleRecipients || []).includes(code)}
+                    onChange={() => handleCheckbox(code)}
+                    className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary"
+                  />
+                  <span className="text-sm font-medium text-slate-700">{code}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.active}
+                onChange={e => setFormData({ ...formData, active: e.target.checked })}
+                className="w-4 h-4 text-primary rounded border-slate-300 focus:ring-primary"
+              />
+              <span className="text-sm font-medium text-slate-700">Active</span>
+            </label>
+          </div>
+
+          <div className="pt-6 flex justify-end">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-indigo-600 transition-colors text-sm font-medium disabled:opacity-50"
+            >
+              <Save size={18} />
+              {saving ? 'Saving...' : 'Save Blood Group'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
