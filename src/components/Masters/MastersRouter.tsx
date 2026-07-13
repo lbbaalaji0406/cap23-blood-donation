@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { BloodGroupList } from './BloodGroupList';
 import { BloodGroupForm } from './BloodGroupForm';
+import { CampList } from './CampList';
+import { CampForm } from './CampForm';
 
 export const MastersRouter = () => {
   const location = useLocation();
@@ -39,7 +41,10 @@ export const MastersRouter = () => {
           <Route path="blood-group/new" element={<BloodGroupForm />} />
           <Route path="blood-group/:id" element={<BloodGroupForm />} />
           
-          <Route path="camp/*" element={<div className="p-6">Camp Master (Coming Soon)</div>} />
+          <Route path="camp" element={<CampList />} />
+          <Route path="camp/new" element={<CampForm />} />
+          <Route path="camp/:id" element={<CampForm />} />
+          
           <Route path="hospital/*" element={<div className="p-6">Hospital Master (Coming Soon)</div>} />
 
           <Route path="/" element={<Navigate to="blood-group" replace />} />

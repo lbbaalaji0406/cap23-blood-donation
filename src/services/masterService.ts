@@ -35,3 +35,38 @@ export const deleteBloodGroup = async (code: string) => {
   // Safe to delete permanently
   await remove(ref(db, `masters/blood_group/${sanitizeId(code)}`));
 };
+
+export interface Camp {
+  name: string;
+  code: string;
+  active: boolean;
+  createdAt: string;
+  createdBy: string;
+}
+
+export const saveCamp = async (camp: Camp) => {
+  const id = sanitizeId(camp.code);
+  await set(ref(db, `masters/camp/${id}`), camp);
+};
+
+export const deleteCamp = async (code: string) => {
+  const id = sanitizeId(code);
+  
+  // Guard check: is this camp referenced by any user?
+  const snapshot = await get(ref(db, 'users'));
+  if (snapshot.exists()) {
+    const allUsers = snapshot.val();
+    let count = 0;
+    for (const [uid, user] of Object.entries(allUsers)) {
+      if ((user as any).campId === id) {
+        count++;
+      }
+    }
+    if (count > 0) {
+      throw new Error(`Cannot delete: ${count} user(s) are assigned to this camp.`);
+    }
+  }
+
+  // Safe to delete permanently
+  await remove(ref(db, `masters/camp/${id}`));
+};
