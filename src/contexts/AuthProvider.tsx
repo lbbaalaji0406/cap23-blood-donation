@@ -39,25 +39,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (firebaseUser) {
         setUser(firebaseUser);
         
-        // Fetch user profile from RTDB
+        // Fetch user profile from RTDB with retry logic to handle auth token propagation races
         const userRef = ref(db, `users/${firebaseUser.uid}`);
-        
-        onValue(userRef, (snapshot) => {
-          const val = snapshot.val();
-          if (val) {
-            setProfile(val as UserProfile);
-            setError(null);
-          } else {
-            // Handle orphaned auth account
-            setProfile(null);
-            setError('User profile not found. Please contact an administrator.');
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        const attachListener = async () => {
+          try {
+            // Force token refresh/wait to narrow the race window
+            await firebaseUser.getIdToken(true);
+          } catch (e) {
+            console.warn("Failed to get ID token", e);
           }
-          setLoading(false);
-        }, (err) => {
-          console.error("Error fetching user profile:", err);
-          setError('Failed to load user profile. Please check your permissions.');
-          setLoading(false);
-        });
+
+          onValue(userRef, (snapshot) => {
+            const val = snapshot.val();
+            if (val) {
+              setProfile(val as UserProfile);
+              setError(null);
+            } else {
+              setProfile(null);
+              setError('User profile not found. Please contact an administrator.');
+            }
+            setLoading(false);
+          }, (err) => {
+            console.error(`Error fetching user profile (attempt ${retryCount + 1}):`, err);
+            if (err.message.includes('permission_denied') && retryCount < maxRetries) {
+              retryCount++;
+              console.log(`Retrying in 500ms...`);
+              setTimeout(attachListener, 500);
+            } else {
+              setError('Failed to load user profile. Please check your permissions.');
+              setLoading(false);
+            }
+          });
+        };
+
+        attachListener();
 
       } else {
         setUser(null);
