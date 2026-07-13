@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
-import { Camp, deleteCamp } from '../../services/masterService';
+import type { Camp } from '../../services/masterService';
+import { deleteCamp } from '../../services/masterService';
 import { Plus, Edit2, Trash2, CheckCircle2, XCircle } from 'lucide-react';
 import { useState } from 'react';
 

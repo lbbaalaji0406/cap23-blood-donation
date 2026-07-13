@@ -114,6 +114,36 @@ This deviation does not touch Hosting. Per the Day tracker, Hosting deployment i
 
 ---
 
+## Deviation D-004: Minimal Users/campId-assignment slice pulled forward from Day 5 to Day 2
+
+**Status:** ✅ Approved by Lead — 2026-07-09
+
+**What deviates:**
+The master prompt's 5-day build plan places Administration (Users, Roles, Settings) entirely on Day 5, under "Reports · RBAC · Deployment · Documentation." This build implements a **minimal slice** of the Users module — viewing users, and setting role + campId on a user — on **Day 2**, ahead of schedule.
+
+**Why:**
+Day 2's Dashboard component (per Day 2 scope) must be verified as correctly camp-scoped for the Manager role — this requires at least one real Manager account, with a real assigned `campId`, created through the app's own logic (not a one-off manual RTDB edit in the Firebase Console). Without this slice, the only way to create a second test account with Manager role is repeating the same manual console bootstrap used once, deliberately, for the very first Admin account (see project setup notes) — which is an acceptable one-time exception for bootstrapping the first Admin, but not a sound way to repeatedly test Manager-scoped features going forward.
+
+**Scope of the pulled-forward slice (deliberately minimal — this is NOT the full Day 5 Administration module):**
+- View list of all users with current role/campId
+- Set a user's `role` and `campId` (Admin-only action, already covered by the existing deployed security rule's Admin-bypass clause)
+- Required-field validation: `campId` must be set when role is "Manager," selected from the live Camp master (dropdown, not free text)
+
+**What stays on Day 5, unchanged:**
+- Roles screen (viewing/editing the `perms` arrays under `/roles`)
+- Settings screen
+- Full Users module polish (search, filtering, deactivation of user accounts, etc.)
+- Formal end-to-end RBAC matrix verification across the complete, finished app
+
+**Impact on Day tracker:**
+Day 5's "RBAC matrix complete — Admin, Manager, User permissions enforced everywhere" checkbox should be treated as **partially pre-satisfied** by this slice — Day 5 work on this line becomes verification/completion, not first implementation, of the user-role-assignment piece specifically.
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Twin (AI Co-Engineer)
+**Date:** 2026-07-09
+
+---
+
 ## Log Summary
 
 | ID | Deviation | Status |
@@ -121,16 +151,4 @@ This deviation does not touch Hosting. Per the Day tracker, Hosting deployment i
 | D-001 | Add `Unfulfilled` terminal workflow state | ✅ Approved |
 | D-002 | Camp-scoped RBAC for Manager (Camp Coordinator) role | ✅ Approved |
 | D-003 | Cloudinary replaces Firebase Storage (Attachments only) | ✅ Approved |
-| D-004 | Users Module pulled forward as minimal slice | ✅ Approved |
-
----
-
-## Deviation D-004: Users Module pulled forward as minimal slice (Day 2)
-
-**Status:** ✅ Approved by Lead — 2026-07-13
-
-**What deviates:**
-The Users module was originally slated for later, but we pulled forward a minimal slice of it (role and camp assignment) to Day 2.
-
-**Why:**
-This was necessary to properly test the Manager (Camp Coordinator) role with `campId` scoping that was introduced in D-002. Without pulling this slice forward, we would have no way to actually assign a camp to a Manager and test the isolation guards built in Day 2.
+| D-004 | Minimal Users/campId slice pulled forward from Day 5 to Day 2 | ✅ Approved |

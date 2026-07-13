@@ -17,7 +17,7 @@
       "donation_request": {
         "$id": {
           ".read": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n          )",
-          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || (\n              root.child('users').child(auth.uid).child('role').val() == 'Manager'\n              && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n              && newData.child('status').val() != 'Closed'\n              && newData.child('status').val() != 'Unfulfilled'\n            )\n          )"
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || (\n              root.child('users').child(auth.uid).child('role').val() == 'Manager'\n              && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n              && newData.child('status').val() != 'Closed'\n              && newData.child('status').val() != 'Unfulfilled'\n            )\n          ) && newData.child('recipientName').exists()\n            && newData.child('blood_groupId').exists()\n            && newData.child('campId').exists()\n            && (!data.exists() || newData.child('campId').val() == data.child('campId').val())"
         }
       }
     },

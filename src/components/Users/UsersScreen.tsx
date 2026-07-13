@@ -4,7 +4,7 @@ import { useRTDB } from '../../hooks/useRTDB';
 import { updateUserRoleAndCamp } from '../../services/userService';
 import type { Role } from '../../contexts/AuthProvider';
 import type { Camp } from '../../services/masterService';
-import { Shield, Edit2, CheckCircle2, X } from 'lucide-react';
+import { Shield, Edit2, X } from 'lucide-react';
 
 interface UserProfile {
   uid: string;

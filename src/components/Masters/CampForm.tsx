@@ -3,7 +3,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
 import type { Camp } from '../../services/masterService';
-import { saveCamp, sanitizeId } from '../../services/masterService';
+import { saveCamp } from '../../services/masterService';
 import { ArrowLeft, Save } from 'lucide-react';
 
 export const CampForm = () => {

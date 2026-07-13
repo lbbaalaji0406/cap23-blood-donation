@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, Navigate } from 'react-router-dom';
 import { login } from '../services/authService';
 import { useAuth } from '../contexts/AuthProvider';
 
@@ -13,8 +13,7 @@ export const LoginScreen = () => {
 
   // Redirect if already logged in
   if (user) {
-    navigate('/dashboard');
-    return null;
+    return <Navigate to="/dashboard" replace />;
   }
 
   const handleLogin = async (e: React.FormEvent) => {

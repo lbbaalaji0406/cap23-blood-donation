@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
-import { Hospital, deleteHospital } from '../../services/masterService';
+import type { Hospital } from '../../services/masterService';
+import { deleteHospital } from '../../services/masterService';
 import { Plus, Edit2, Trash2, CheckCircle2, XCircle } from 'lucide-react';
 import { useState } from 'react';
 

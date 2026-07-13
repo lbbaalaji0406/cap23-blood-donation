@@ -25,7 +25,7 @@ export const deleteBloodGroup = async (code: string) => {
   const snapshot = await get(ref(db, 'masters/blood_group'));
   if (snapshot.exists()) {
     const allGroups = snapshot.val() as Record<string, BloodGroup>;
-    for (const [id, group] of Object.entries(allGroups)) {
+    for (const [, group] of Object.entries(allGroups)) {
       if (group.code !== code && group.compatibleRecipients && group.compatibleRecipients.includes(code)) {
         throw new Error(`Cannot delete: Blood Group ${code} is referenced by ${group.code}.`);
       }
@@ -34,6 +34,11 @@ export const deleteBloodGroup = async (code: string) => {
 
   // Safe to delete permanently
   await remove(ref(db, `masters/blood_group/${sanitizeId(code)}`));
+};
+
+export const getBloodGroups = async (): Promise<Record<string, BloodGroup>> => {
+  const snapshot = await get(ref(db, 'masters/blood_group'));
+  return snapshot.exists() ? snapshot.val() : {};
 };
 
 export interface Camp {
@@ -57,7 +62,7 @@ export const deleteCamp = async (code: string) => {
   if (snapshot.exists()) {
     const allUsers = snapshot.val();
     let count = 0;
-    for (const [uid, user] of Object.entries(allUsers)) {
+    for (const [, user] of Object.entries(allUsers)) {
       if ((user as any).campId === id) {
         count++;
       }
@@ -69,6 +74,11 @@ export const deleteCamp = async (code: string) => {
 
   // Safe to delete permanently
   await remove(ref(db, `masters/camp/${id}`));
+};
+
+export const getCamps = async (): Promise<Record<string, Camp>> => {
+  const snapshot = await get(ref(db, 'masters/camp'));
+  return snapshot.exists() ? snapshot.val() : {};
 };
 
 export interface Hospital {
@@ -88,4 +98,9 @@ export const saveHospital = async (hospital: Hospital) => {
 export const deleteHospital = async (code: string) => {
   const id = sanitizeId(code);
   await remove(ref(db, `masters/hospital/${id}`));
+};
+
+export const getHospitals = async (): Promise<Record<string, Hospital>> => {
+  const snapshot = await get(ref(db, 'masters/hospital'));
+  return snapshot.exists() ? snapshot.val() : {};
 };
