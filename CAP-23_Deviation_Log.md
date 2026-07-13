@@ -121,3 +121,16 @@ This deviation does not touch Hosting. Per the Day tracker, Hosting deployment i
 | D-001 | Add `Unfulfilled` terminal workflow state | ✅ Approved |
 | D-002 | Camp-scoped RBAC for Manager (Camp Coordinator) role | ✅ Approved |
 | D-003 | Cloudinary replaces Firebase Storage (Attachments only) | ✅ Approved |
+| D-004 | Users Module pulled forward as minimal slice | ✅ Approved |
+
+---
+
+## Deviation D-004: Users Module pulled forward as minimal slice (Day 2)
+
+**Status:** ✅ Approved by Lead — 2026-07-13
+
+**What deviates:**
+The Users module was originally slated for later, but we pulled forward a minimal slice of it (role and camp assignment) to Day 2.
+
+**Why:**
+This was necessary to properly test the Manager (Camp Coordinator) role with `campId` scoping that was introduced in D-002. Without pulling this slice forward, we would have no way to actually assign a camp to a Manager and test the isolation guards built in Day 2.
