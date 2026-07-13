@@ -3,6 +3,8 @@ import { BloodGroupList } from './BloodGroupList';
 import { BloodGroupForm } from './BloodGroupForm';
 import { CampList } from './CampList';
 import { CampForm } from './CampForm';
+import { HospitalList } from './HospitalList';
+import { HospitalForm } from './HospitalForm';
 
 export const MastersRouter = () => {
   const location = useLocation();
@@ -45,7 +47,9 @@ export const MastersRouter = () => {
           <Route path="camp/new" element={<CampForm />} />
           <Route path="camp/:id" element={<CampForm />} />
           
-          <Route path="hospital/*" element={<div className="p-6">Hospital Master (Coming Soon)</div>} />
+          <Route path="hospital" element={<HospitalList />} />
+          <Route path="hospital/new" element={<HospitalForm />} />
+          <Route path="hospital/:id" element={<HospitalForm />} />
 
           <Route path="/" element={<Navigate to="blood-group" replace />} />
         </Routes>

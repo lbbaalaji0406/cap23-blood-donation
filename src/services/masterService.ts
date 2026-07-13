@@ -70,3 +70,22 @@ export const deleteCamp = async (code: string) => {
   // Safe to delete permanently
   await remove(ref(db, `masters/camp/${id}`));
 };
+
+export interface Hospital {
+  name: string;
+  code: string;
+  active: boolean;
+  createdAt: string;
+  createdBy: string;
+  address: string;
+}
+
+export const saveHospital = async (hospital: Hospital) => {
+  const id = sanitizeId(hospital.code);
+  await set(ref(db, `masters/hospital/${id}`), hospital);
+};
+
+export const deleteHospital = async (code: string) => {
+  const id = sanitizeId(code);
+  await remove(ref(db, `masters/hospital/${id}`));
+};
