@@ -9,7 +9,7 @@ const statusFlow = ['Registered', 'Verified', 'Matched', 'Donated', 'Closed'];
 const unfulfilledState = 'Unfulfilled';
 
 export const RequestDetail = () => {
-  const { id } = useParams();
+  const { campId, id } = useParams();
   const navigate = useNavigate();
   
   const [request, setRequest] = useState<DonationRequest | null>(null);
@@ -25,8 +25,8 @@ export const RequestDetail = () => {
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        if (!id) return;
-        const req = await requestService.getRequest(id);
+        if (!id || !campId) return;
+        const req = await requestService.getRequest(campId, id);
         if (!req) {
           setError('Donation Request not found.');
           setLoading(false);
@@ -52,7 +52,7 @@ export const RequestDetail = () => {
       }
     };
     fetchAll();
-  }, [id]);
+  }, [id, campId]);
 
   if (loading) return <div className="p-6">Loading...</div>;
 
@@ -83,7 +83,7 @@ export const RequestDetail = () => {
           <h1 className="text-2xl font-bold text-slate-900">Request {request.id.slice(-6)}</h1>
         </div>
         <button 
-          onClick={() => navigate(`/requests/${request.id}/edit`)}
+          onClick={() => navigate(`/requests/${request.campId}/${request.id}/edit`)}
           className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm shadow-sm"
         >
           Edit Fields
@@ -146,7 +146,7 @@ export const RequestDetail = () => {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Camp</label>
-                <div className="text-base text-slate-900">{camps[request.campId]?.name || request.campId}</div>
+                <div className="text-base text-slate-900">{camps[request.campId || '']?.name || request.campId}</div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Blood Group</label>

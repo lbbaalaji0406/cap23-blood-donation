@@ -7,7 +7,7 @@ import { getCamps, getBloodGroups, getHospitals } from '../../services/masterSer
 import type { Camp, BloodGroup, Hospital } from '../../services/masterService';
 
 export const RequestForm = () => {
-  const { id } = useParams();
+  const { campId: routeCampId, id } = useParams();
   const navigate = useNavigate();
   const { profile, user } = useAuth();
   
@@ -42,14 +42,14 @@ export const RequestForm = () => {
         setHospitals(hData);
 
         if (isEdit && id) {
-          const req = await requestService.getRequest(id);
+          const req = await requestService.getRequest(routeCampId!, id);
           if (req) {
             setRecipientName(req.recipientName);
             setUnitsNeeded(req.unitsNeeded);
             setUrgency(req.urgency);
             setBloodGroupId(req.blood_groupId);
             setRecipientHospitalId(req.recipientHospitalId);
-            setCampId(req.campId);
+            setCampId(req.campId || '');
           } else {
             navigate('/requests');
           }
@@ -61,7 +61,7 @@ export const RequestForm = () => {
       }
     };
     init();
-  }, [id, isEdit, navigate]);
+  }, [id, routeCampId, isEdit, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,8 +86,8 @@ export const RequestForm = () => {
         recipientHospitalId,
       };
 
-      // If Admin creating, attach the selected campId
-      if (!isEdit && profile?.role === 'Admin') {
+      // Admin must pass the campId (either selected on Create, or loaded into state on Edit)
+      if (profile?.role === 'Admin') {
         payload.campId = campId;
       }
 

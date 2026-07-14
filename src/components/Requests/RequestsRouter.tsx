@@ -8,8 +8,8 @@ export const RequestsRouter = () => {
     <Routes>
       <Route path="/" element={<RequestList />} />
       <Route path="/new" element={<RequestForm />} />
-      <Route path="/:id" element={<RequestDetail />} />
-      <Route path="/:id/edit" element={<RequestForm />} />
+      <Route path="/:campId/:id" element={<RequestDetail />} />
+      <Route path="/:campId/:id/edit" element={<RequestForm />} />
     </Routes>
   );
 };

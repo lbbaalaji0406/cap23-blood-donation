@@ -149,7 +149,7 @@ export const RequestList = () => {
                   </td>
                   {profile?.role === 'Admin' && (
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                      {camps[req.campId]?.name || req.campId}
+                      {camps[req.campId || '']?.name || req.campId}
                     </td>
                   )}
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -159,13 +159,13 @@ export const RequestList = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button
-                      onClick={() => navigate(`/requests/${req.id}`)}
+                      onClick={() => navigate(`/requests/${req.campId}/${req.id}`)}
                       className="text-indigo-600 hover:text-indigo-900 mr-4"
                     >
                       View
                     </button>
                     <button
-                      onClick={() => navigate(`/requests/${req.id}/edit`)}
+                      onClick={() => navigate(`/requests/${req.campId}/${req.id}/edit`)}
                       className="text-slate-600 hover:text-slate-900"
                     >
                       Edit
