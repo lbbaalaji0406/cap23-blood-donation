@@ -67,6 +67,16 @@ Numbered `ID-001`, `ID-002`, etc. — sequential, not tied to any particular day
 
 ---
 
+## ID-007: Admin multi-fetch "Loop over camps" approach for Donation Requests (Day 3)
+
+**Gap:** With D-005 moving Donation Requests into a `campId`-nested structure, there is no longer a single flat endpoint for the Admin to fetch *all* requests system-wide. The specs do not dictate how cross-camp aggregation should be handled when the primary data structure is sharded by camp.
+
+**Decision:** The `getAllRequests` method for the Admin role first fetches the list of all camps (`/masters/camp`), then maps over them to perform concurrent `get()` requests to each camp's nested `donation_request` subtree, merging and sorting the results client-side.
+
+**Why:** The alternative would be creating a secondary, flat, denormalized cross-camp index just for Admin reads. The "loop over camps" approach was chosen to ensure **zero data duplication** (maintaining a single source of truth) and to lower the defect surface by avoiding the need to keep two separate write paths perfectly in sync during every Create, Edit, or Delete operation.
+
+---
+
 ## Log Summary
 
 | ID | Decision | Day |
@@ -77,3 +87,4 @@ Numbered `ID-001`, `ID-002`, etc. — sequential, not tied to any particular day
 | ID-004 | campId immutable after creation | Day 3 |
 | ID-005 | Status hardcoded to Registered at creation | Day 3 |
 | ID-006 | Detail screen tab shells built ahead of Day 4 content | Day 3 |
+| ID-007 | Admin loop-over-camps aggregation (no data duplication) | Day 3 |

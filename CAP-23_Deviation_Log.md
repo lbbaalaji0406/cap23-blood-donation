@@ -144,6 +144,34 @@ Day 5's "RBAC matrix complete — Admin, Manager, User permissions enforced ever
 
 ---
 
+## Deviation D-005: Restructure Donation Request to campId-in-Path
+
+**Status:** ✅ Approved by Lead — 2026-07-14
+
+**What deviates:**
+The original flat structure for transactions (`/transactions/donation_request/{requestId}`) implied by the governance DB schema has been restructured into a hierarchical path: `/transactions/donation_request/{campId}/{requestId}`.
+
+**Why:**
+Firebase RTDB security rules evaluate from the top down. A flat list structure requires a root-level `.read` rule to fetch the list. If that rule is restricted using `data.child('campId')`, it evaluates against individual records, but Firebase rejects the entire query at the root level (`permission_denied`) because rules cannot filter data—they only secure access to known paths. To achieve strict, natively-secured read isolation for Managers (Camp Coordinators) without `permission_denied` errors during list queries, the `campId` must be embedded in the path so the `.read` rule can explicitly grant access to `/transactions/donation_request/$campId`.
+
+**Scope of the change:**
+- **DB Rules:** Restructured to isolate `.read` and `.write` by `$campId` natively. Removed legacy `campId` immutability clause, as `campId` is now structural.
+- **Data Migration:** Moved existing records from the flat structure to the nested structure via a one-time Admin SDK script.
+- **App Service:** Refactored `requestService.ts` to re-attach `campId` to objects dynamically upon fetch.
+- **Routing:** Updated `RequestsRouter` and UI components to require `/:campId/:requestId` in paths.
+
+**Impact on governance documents:**
+| Document | Section | Required edit |
+|---|---|---|
+| DB Design | `/transactions/donation_request` schema | Update schema path to include `{campId}` level. |
+| DB Design | Security Rules | Replace flat rules with hierarchical `$campId` rules for strict isolation. |
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Twin (AI Co-Engineer)
+**Date:** 2026-07-14
+
+---
+
 ## Log Summary
 
 | ID | Deviation | Status |
@@ -152,3 +180,4 @@ Day 5's "RBAC matrix complete — Admin, Manager, User permissions enforced ever
 | D-002 | Camp-scoped RBAC for Manager (Camp Coordinator) role | ✅ Approved |
 | D-003 | Cloudinary replaces Firebase Storage (Attachments only) | ✅ Approved |
 | D-004 | Minimal Users/campId slice pulled forward from Day 5 to Day 2 | ✅ Approved |
+| D-005 | Restructure Donation Request to campId-in-Path for Manager read-isolation | ✅ Approved |
