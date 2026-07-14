@@ -15,9 +15,12 @@
 
     "transactions": {
       "donation_request": {
-        "$id": {
-          ".read": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n          )",
-          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() == 'Admin'\n            || (\n              root.child('users').child(auth.uid).child('role').val() == 'Manager'\n              && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()\n              && newData.child('status').val() != 'Closed'\n              && newData.child('status').val() != 'Unfulfilled'\n            )\n          ) && newData.child('recipientName').exists()\n            && newData.child('blood_groupId').exists()\n            && newData.child('campId').exists()\n            && (!data.exists() || newData.child('campId').val() == data.child('campId').val())"
+        "$campId": {
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId)",
+          ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId))",
+          "$requestId": {
+            ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId && newData.child('status').val() != 'Closed' && newData.child('status').val() != 'Unfulfilled')) && newData.child('recipientName').exists() && newData.child('blood_groupId').exists()"
+          }
         }
       }
     },
