@@ -1,4 +1,4 @@
-import { ref, get, set, update, push, serverTimestamp, query, orderByChild, equalTo } from 'firebase/database';
+import { ref, get, set, update, push, serverTimestamp, query, orderByChild } from 'firebase/database';
 import { db as database } from '../firebase';
 
 export type UrgencyLevel = 'Routine' | 'Urgent' | 'Critical';
@@ -6,10 +6,10 @@ export type RequestStatus = 'Registered' | 'Verified' | 'Matched' | 'Donated' | 
 
 export interface DonationRequest {
   id: string;
+  campId?: string; // CampId is now structural, but we keep it here for UI convenience
   recipientName: string;
   recipientHospitalId: string;
   blood_groupId: string;
-  campId: string;
   unitsNeeded: number;
   urgency: UrgencyLevel;
   status: RequestStatus;
@@ -26,33 +26,54 @@ export interface DonationRequest {
 export const requestService = {
   // Fetch all requests
   getAllRequests: async (role?: string, campId?: string): Promise<DonationRequest[]> => {
-    const requestsRef = ref(database, 'transactions/donation_request');
-    
-    let q;
     if (role === 'Manager' && campId) {
-      q = query(requestsRef, orderByChild('campId'), equalTo(campId));
+      // Direct natively allowed read of the camp's subtree
+      const campRequestsRef = ref(database, `transactions/donation_request/${campId}`);
+      const q = query(campRequestsRef, orderByChild('createdAt'));
+      const snapshot = await get(q);
+      
+      const results: DonationRequest[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach((child) => {
+          results.push({ id: child.key, campId, ...child.val() } as DonationRequest);
+        });
+      }
+      return results.reverse();
     } else {
-      q = query(requestsRef, orderByChild('createdAt'));
+      // Admin: loop over all camps and merge
+      const campsSnapshot = await get(ref(database, 'masters/camp'));
+      if (!campsSnapshot.exists()) return [];
+      
+      const allCamps = campsSnapshot.val();
+      const campIds = Object.keys(allCamps);
+      
+      const promises = campIds.map(async (cId) => {
+        const campRef = ref(database, `transactions/donation_request/${cId}`);
+        const snapshot = await get(campRef);
+        const campResults: DonationRequest[] = [];
+        if (snapshot.exists()) {
+          snapshot.forEach((child) => {
+            campResults.push({ id: child.key, campId: cId, ...child.val() } as DonationRequest);
+          });
+        }
+        return campResults;
+      });
+      
+      const allResultsArray = await Promise.all(promises);
+      const allResults = allResultsArray.flat();
+      
+      // Sort by createdAt descending
+      allResults.sort((a, b) => b.createdAt - a.createdAt);
+      return allResults;
     }
-
-    const snapshot = await get(q);
-    
-    if (!snapshot.exists()) return [];
-    
-    const results: DonationRequest[] = [];
-    snapshot.forEach((child) => {
-      results.push({ id: child.key, ...child.val() } as DonationRequest);
-    });
-    
-    return results.reverse();
   },
 
   // Fetch a single request
-  getRequest: async (id: string): Promise<DonationRequest | null> => {
-    const requestRef = ref(database, `transactions/donation_request/${id}`);
+  getRequest: async (campId: string, id: string): Promise<DonationRequest | null> => {
+    const requestRef = ref(database, `transactions/donation_request/${campId}/${id}`);
     const snapshot = await get(requestRef);
     if (!snapshot.exists()) return null;
-    return { id: snapshot.key, ...snapshot.val() } as DonationRequest;
+    return { id: snapshot.key, campId, ...snapshot.val() } as DonationRequest;
   },
 
   // Save (Create or Update)
@@ -62,29 +83,32 @@ export const requestService = {
     uid: string,
     managerCampId?: string // Passed if user is Manager
   ): Promise<void> => {
+    const targetCampId = managerCampId || payload.campId;
+    if (!targetCampId) throw new Error("Camp ID is required");
+
     if (!id) {
       // CREATE flow
-      const requestsRef = ref(database, 'transactions/donation_request');
+      const requestsRef = ref(database, `transactions/donation_request/${targetCampId}`);
       const newRef = push(requestsRef);
       
       const newRequest = {
         ...payload,
-        // Enforce hardcoded fields for Create
         status: 'Registered',
-        campId: managerCampId || payload.campId, // Manager gets forced to their campId, Admin relies on payload
         createdBy: uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
       
+      // Remove campId from body as it is now in the path
+      delete newRequest.campId;
+      
       await set(newRef, newRequest);
     } else {
       // EDIT flow
-      const requestRef = ref(database, `transactions/donation_request/${id}`);
+      const requestRef = ref(database, `transactions/donation_request/${targetCampId}/${id}`);
       
-      // Explicitly protect non-editable fields by removing them from payload if they leaked in
       const updatePayload = { ...payload };
-      delete updatePayload.campId; // CampId is immutable
+      delete updatePayload.campId; // CampId is structural, shouldn't be in payload
       delete updatePayload.status; // Status is governed by Workflow, not simple edits
       delete updatePayload.id;
       delete updatePayload.createdBy;
@@ -92,7 +116,6 @@ export const requestService = {
 
       updatePayload.updatedAt = serverTimestamp() as any;
 
-      // Use update() to NOT wipe out the existing campId and status
       await update(requestRef, updatePayload);
     }
   }
