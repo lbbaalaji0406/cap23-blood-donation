@@ -35,6 +35,11 @@ export const RequestList = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        if (!profile) return;
+        if (profile.role === 'Manager' && !profile.campId) return;
+
+        console.log(`[RequestList] Firing RTDB query for role=${profile.role}, targetPath=/transactions/donation_request/${profile.role === 'Manager' ? profile.campId : 'Admin-Loop'}`);
+
         const [cData, hData, bgData] = await Promise.all([
           getCamps(),
           getHospitals(),
@@ -44,13 +49,12 @@ export const RequestList = () => {
         setHospitals(hData);
         setBloodGroups(bgData);
 
-        const data = await requestService.getAllRequests(profile?.role, profile?.campId);
+        const data = await requestService.getAllRequests(profile.role, profile.campId);
         setRequests(data);
+        setLoading(false);
       } catch (err: any) {
         console.error("Error fetching requests:", err);
         setError(err.message || 'Failed to load requests');
-      } finally {
-        setLoading(false);
       }
     };
     fetchData();

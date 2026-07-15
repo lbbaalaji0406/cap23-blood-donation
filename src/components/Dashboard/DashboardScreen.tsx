@@ -1,17 +1,36 @@
 import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
 import { Activity, Clock, Calendar, CheckCircle2 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { requestService, type DonationRequest } from '../../services/requestService';
 
 export const DashboardScreen = () => {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'Admin';
   
-  // Later we'll fetch actual requests. For now just to show zero state handling.
-  const { data: requestsData, loading } = useRTDB<Record<string, any>>('requests');
+  const [requests, setRequests] = useState<DonationRequest[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedCamp, setSelectedCamp] = useState<string>('all');
 
-  const requests = requestsData ? Object.entries(requestsData).map(([id, val]) => ({ id, ...val })) : [];
+  useEffect(() => {
+    const fetchDashboardRequests = async () => {
+      try {
+        if (!profile) return;
+        if (profile.role === 'Manager' && !profile.campId) return;
+        
+        console.log(`[Dashboard] Firing RTDB query for role=${profile.role}, targetPath=/transactions/donation_request/${profile.role === 'Manager' ? profile.campId : 'Admin-Loop'}`);
+        
+        setLoading(true);
+        const data = await requestService.getAllRequests(profile.role, profile.campId);
+        setRequests(data);
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchDashboardRequests();
+  }, [profile]);
   
   // Filter by camp if manager, or if admin selected a camp
   const visibleRequests = requests.filter(req => {
