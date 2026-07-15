@@ -18,6 +18,7 @@
         "$campId": {
           ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId)",
           ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId))",
+          ".indexOn": ["createdAt"],
           "$requestId": {
             ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId && newData.child('status').val() != 'Closed' && newData.child('status').val() != 'Unfulfilled')) && newData.child('recipientName').exists() && newData.child('blood_groupId').exists()"
           }
