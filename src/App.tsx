@@ -8,14 +8,22 @@ import { MastersRouter } from './components/Masters/MastersRouter';
 import { UsersScreen } from './components/Users/UsersScreen';
 import { DashboardScreen } from './components/Dashboard/DashboardScreen';
 import { RequestsRouter } from './components/Requests/RequestsRouter';
+import { ReportsDashboard } from './components/Reports/ReportsDashboard';
+import { DonorHistoryView } from './components/Users/DonorHistoryView';
 
-// Stub components for Day 1
-const StubPage = ({ title }: { title: string }) => (
-  <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-200">
-    <h2 className="text-xl font-bold text-slate-900 mb-2">{title}</h2>
-    <p className="text-slate-500">This module is part of the Day 2+ scope.</p>
-  </div>
-);
+import { RolesScreen } from './components/Administration/RolesScreen';
+import { SettingsScreen } from './components/Administration/SettingsScreen';
+
+
+
+import { useAuth } from './contexts/AuthProvider';
+const RoleRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
+  const { profile } = useAuth();
+  if (!profile || !allowedRoles.includes(profile.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <>{children}</>;
+};
 
 const App = () => {
   return (
@@ -32,11 +40,11 @@ const App = () => {
               <Route path="/dashboard" element={<DashboardScreen />} />
               <Route path="/masters/*" element={<MastersRouter />} />
               <Route path="/requests/*" element={<RequestsRouter />} />
-              <Route path="/history" element={<StubPage title="My Donation History" />} />
-              <Route path="/reports" element={<StubPage title="Reports" />} />
-              <Route path="/users" element={<UsersScreen />} />
-              <Route path="/roles" element={<StubPage title="Role Management" />} />
-              <Route path="/settings" element={<StubPage title="Settings" />} />
+              <Route path="/history" element={<RoleRoute allowedRoles={['User']}><div className="p-4 lg:p-8"><DonorHistoryView /></div></RoleRoute>} />
+              <Route path="users" element={<RoleRoute allowedRoles={['Admin']}><UsersScreen /></RoleRoute>} />
+              <Route path="reports" element={<RoleRoute allowedRoles={['Admin', 'Manager']}><ReportsDashboard /></RoleRoute>} />
+              <Route path="/roles" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><RolesScreen /></div></RoleRoute>} />
+              <Route path="/settings" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><SettingsScreen /></div></RoleRoute>} />
               
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>

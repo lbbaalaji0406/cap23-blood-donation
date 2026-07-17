@@ -95,7 +95,10 @@ export const UsersScreen = () => {
                 </tr>
               ) : users.map((user) => (
                 <tr key={user.uid} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3 font-medium text-slate-900">{user.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-900">
+                    <div>{user.name}</div>
+                    <div className="text-xs text-slate-400 font-mono mt-0.5" title="User UID">{user.uid}</div>
+                  </td>
                   <td className="px-4 py-3 text-slate-600">{user.email}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium ${
