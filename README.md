@@ -1,57 +1,74 @@
-# CAP-23 · Blood Donation Management
+# CAP-23: Blood Donation Management System
 
-This is a healthcare-domain capstone project for matching donors to recipients with verification and donation history tracking.
-It enforces a strict role-based access control (RBAC) model and follows the OGE (Observability, Guardrails, Evaluation) principles.
+A robust, strictly-governed platform for managing blood donation requests across multiple camps, connecting critical patients with verified donors.
 
-## Architecture
+## Architecture & Tech Stack
 
-- **Frontend:** React 19, React Router 7, TypeScript 6, Tailwind v4, Lucide React
-- **Build Tool:** Vite (using the latest stable Vite with Rollup, per deviation approval due to Rolldown instability)
-- **Backend:** Firebase v12 (Auth, Realtime Database, Hosting)
-- **Storage:** Cloudinary (for Attachments)
+This project strictly adheres to a completely serverless, no-backend architecture using:
+- **Frontend:** React 19, TypeScript, Vite, TailwindCSS (v4)
+- **Database:** Firebase Realtime Database (RTDB)
+- **Authentication:** Firebase Authentication
+- **Storage:** Cloudinary API (replaces Firebase Storage per Deviation D-003, removing the Blaze plan requirement)
+- **Hosting:** Firebase Hosting
+- **Reporting:** Client-side only using SheetJS (`xlsx`) and `jsPDF`.
 
-## Governance & Deviations
+## Governance Philosophy (OGE)
 
-This project adheres strictly to the provided governance templates (FDD, DB Design, UI Specs, TDD, Test Plan). Three approved deviations apply:
-- **D-001:** Added `Unfulfilled` terminal workflow state.
-- **D-002:** Manager accounts are strictly scoped to their assigned `campId`.
-- **D-003:** Cloudinary replaces Firebase Storage for Attachments.
+This project was engineered following the **OGE (Observability, Guardrails, Evaluation)** paradigm. We do not assume happy paths. We assume structural failures and enforce boundaries at the lowest possible layer (the database rules matrix).
+
+For full details on this approach and a timeline of the structural vulnerabilities we discovered and resolved during this build, read the [DESIGN.md](./DESIGN.md) document.
+
+### The 8 Governance Documents
+This build is strictly governed by a suite of documents that evolved over the 5-day build.
+1. [CAP-23_FDD.md](./CAP-23_FDD.md)
+2. [CAP-23_TDD.md](./CAP-23_TDD.md)
+3. [CAP-23_DB_Design.md](./CAP-23_DB_Design.md)
+4. [CAP-23_UI_Specs.md](./CAP-23_UI_Specs.md)
+5. [CAP-23_Test_Plan.md](./CAP-23_Test_Plan.md)
+6. [CAP-23_Deviation_Log.md](./CAP-23_Deviation_Log.md)
+7. [CAP-23_Implementation_Decisions_Log.md](./CAP-23_Implementation_Decisions_Log.md)
+8. **Day Build Prompts** (Chronological specs guiding the build)
 
 ## Setup Instructions
 
-1. Clone the repository.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Set up Firebase:
-   - Create a project in the [Firebase Console](https://console.firebase.google.com/).
-   - Enable **Authentication** (Email/Password), **Realtime Database**, **Storage**, and **Hosting**.
-   - Copy the configuration object and create a `.env.local` file in the root directory:
-     ```env
-     VITE_FIREBASE_API_KEY=your_api_key
-     VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
-     VITE_FIREBASE_DATABASE_URL=your_database_url
-     VITE_FIREBASE_PROJECT_ID=your_project_id
-     VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-     VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-     VITE_FIREBASE_APP_ID=your_app_id
-     ```
-   - Connect your project using the Firebase CLI:
-     ```bash
-     firebase login
-     firebase use --add
-     ```
-   - Deploy the security rules:
-     ```bash
-     firebase deploy --only database,storage
-     ```
+### 1. Environment Variables
+Create a `.env` file in the root directory and populate it with your Firebase configuration and Cloudinary preset:
+```env
+VITE_FIREBASE_API_KEY="your-api-key"
+VITE_FIREBASE_AUTH_DOMAIN="your-project.firebaseapp.com"
+VITE_FIREBASE_DATABASE_URL="https://your-project.firebasedatabase.app"
+VITE_FIREBASE_PROJECT_ID="your-project"
+VITE_FIREBASE_STORAGE_BUCKET="your-project.appspot.com"
+VITE_FIREBASE_MESSAGING_SENDER_ID="your-sender-id"
+VITE_FIREBASE_APP_ID="your-app-id"
 
-4. Run the development server:
-   ```bash
-   npm run dev
-   ```
+# Cloudinary (Unauthenticated Uploads via Preset)
+VITE_CLOUDINARY_CLOUD_NAME="your-cloud-name"
+VITE_CLOUDINARY_UPLOAD_PRESET="your-preset"
+```
 
-## Development Discipline
+### 2. Firebase Database Rules
+Deploy the rigorous security rules established in this project.
+```bash
+firebase deploy --only database
+```
 
-This repository uses a strict commit-per-component discipline.
+### 3. Bootstrap the First Admin (One-Time Manual Step)
+Because `Admin` is the highest role required to create other users, the very first Admin must be bootstrapped manually via the Firebase Console:
+1. Sign up for an account via the UI (`admin@example.com`).
+2. Go to the Firebase Realtime Database console.
+3. Navigate to `/users/{your-uid}`.
+4. Manually set `"role": "Admin"`.
+5. You can now log into the UI and use the "Users" and "Masters" tabs to set up the rest of the system.
+
+### 4. Running Locally
+```bash
+npm install
+npm run dev
+```
+
+### 5. Deployment
+```bash
+npm run build
+firebase deploy --only hosting
+```

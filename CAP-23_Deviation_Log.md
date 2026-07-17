@@ -181,3 +181,81 @@ Firebase RTDB security rules evaluate from the top down. A flat list structure r
 | D-003 | Cloudinary replaces Firebase Storage (Attachments only) | ✅ Approved |
 | D-004 | Minimal Users/campId slice pulled forward from Day 5 to Day 2 | ✅ Approved |
 | D-005 | Restructure Donation Request to campId-in-Path for Manager read-isolation | ✅ Approved |
+| D-006 | Apply camp-isolation RBAC to Comments and Attachments (closing structural bypass) | ✅ Approved |
+| D-007 | Eliminate cascading write rule flaw by consolidating logic into $requestId leaf node | ✅ Approved |
+| D-008 | Require explicit `.indexOn` for auditLogs to satisfy Firebase SDK restrictions | ✅ Approved |
+
+---
+
+## Deviation D-006: Apply camp-isolation RBAC to Comments and Attachments
+
+**Status:** ✅ Approved by Lead — 2026-07-15
+
+**What deviates:**
+The original DB design provided a blanket `auth != null` rule for the `/comments` and `/attachments` nodes. While these nodes are keyed by unguessable `transactionId`s (push IDs), leaving them globally accessible bypasses the strict `campId` data-isolation guarantee established by D-002 and D-005.
+
+**Why:**
+Security through obscurity (relying on unguessable IDs) is structurally insufficient. A healthcare-adjacent system must actively reject unauthorized reads/writes at the database layer. This deviation pulls Comments and Attachments into the same rigorous camp-isolated security perimeter as the parent Donation Requests.
+
+**Scope of the change:**
+- **Data Model:** A `campId` field is appended to every new Comment and Attachment at creation.
+- **Rules:** The `.read` and `.write` rules for `/comments` and `/attachments` are upgraded to explicitly enforce that a Manager can only access data if their `profile.campId` matches the node's stored `campId`.
+- **Implementation Strategy:** We are adopting the "envelope" or "query-rule" approach as discussed, meaning the rule checks `campId` appropriately depending on the nested structure chosen for these nodes.
+
+**Impact on governance documents:**
+| Document | Section | Required edit |
+|---|---|---|
+| DB Design | Security Rules | Update `/comments` and `/attachments` rules from `auth != null` to explicit `campId` verification. |
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Antigravity (AI Co-Engineer)
+**Date:** 2026-07-15
+
+---
+
+## Deviation D-007: Eliminate cascading write rule flaw by consolidating logic into $requestId leaf node
+
+**Status:** ✅ Approved by Lead — 2026-07-16
+
+**What deviates:**
+The security rules structure initially placed a permissive `.write` rule at the `$campId` parent level, while relying on the child `$requestId` level to enforce strict status transition logic (e.g., preventing a Manager from jumping directly from Matched to Closed). This build removes the parent-level `.write` rule and consolidates all Role, Camp Match, and State Transition validations entirely into the `$requestId` leaf node.
+
+**Why:**
+Firebase Realtime Database rules cascade downwards, meaning that if a parent node grants write access, it cannot be revoked or further restricted by a child node. By having a permissive `.write` rule at the `$campId` level, the stringent status transition logic at the `$requestId` level was completely bypassed, allowing a Manager to perform unauthorized status jumps (like skipping `Donated` to reach `Closed`).
+
+**Scope of the change:**
+- **Rules:** The `.write` rule at `$campId` was deleted. All validation logic (Role == Admin OR (Role == Manager AND user.campId == request.campId)), along with the complex status transition matrix, was merged into a single comprehensive rule at the `$requestId` level.
+- **Verification:** Explicitly confirmed that the "Create" path (new records) remained intact by preserving the `(!data.exists() && newData.child('status').val() == 'Registered')` branch within the new consolidated rule.
+
+**Impact on governance documents:**
+| Document | Section | Required edit |
+|---|---|---|
+| DB Design | Security Rules | Update Donation Request rules to remove `$campId` `.write` logic and document the consolidated leaf-node rule approach. |
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Antigravity (AI Co-Engineer)
+**Date:** 2026-07-16
+
+---
+
+## Deviation D-008: Require explicit `.indexOn` for auditLogs to satisfy Firebase SDK restrictions
+
+**Status:** ✅ Approved by Lead — 2026-07-16
+
+**What deviates:**
+The original DB Design document does not specify any indexing rules (`.indexOn`). This build adds an explicit `".indexOn": ["transactionId"]` rule to the `/auditLogs` database node.
+
+**Why:**
+The modern Firebase JS SDK (v9+) proactively rejects client-side queries that use `orderByChild()` if the targeted database node lacks a matching `.indexOn` security rule. Without this rule, the SDK threw a hard error (`Error: Index not defined`), preventing the Admin's Audit Log tab from rendering data and triggering a misleading "Permission Denied" UI fallback message. Adding the index resolves the framework restriction.
+
+**Scope of the change:**
+- **Rules:** Appended `".indexOn": ["transactionId"]` to the `/auditLogs` node in `database.rules.json`.
+
+**Impact on governance documents:**
+| Document | Section | Required edit |
+|---|---|---|
+| DB Design | Security Rules | Add `.indexOn` array to the `auditLogs` schema definition. |
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Antigravity (AI Co-Engineer)
+**Date:** 2026-07-16

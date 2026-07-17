@@ -88,3 +88,49 @@ Numbered `ID-001`, `ID-002`, etc. — sequential, not tied to any particular day
 | ID-005 | Status hardcoded to Registered at creation | Day 3 |
 | ID-006 | Detail screen tab shells built ahead of Day 4 content | Day 3 |
 | ID-007 | Admin loop-over-camps aggregation (no data duplication) | Day 3 |
+| ID-008 | Atomic donor-match locking via `/active_donor_matches` node | Day 4 |
+| ID-009 | Donor History `volume` field is manually inputted at Donated transition, defaulting to 1 | Day 5 |
+| ID-010 | Donor ID badge explicitly displayed on User Dashboard for Manager bridging | Day 5 |
+| ID-011 | Server-side 90-day Eligibility Guard implemented via DB Rules | Day 5 |
+
+---
+
+## ID-008: Atomic donor-match locking via `/active_donor_matches/{donorUid}` (Day 4)
+
+**Gap:** TDD §5 explicitly requires that donor-matching verify, "within the same transaction," that a donor isn't already Matched to another open request — but never specifies the mechanism. Firebase's `runTransaction()` only guarantees atomicity within a single node path; the original flat-then-nested `donation_request` structure has no single path that could atomically check "is this donor free" across every camp's requests simultaneously.
+
+**Decision:** Add a new top-level RTDB node, `/active_donor_matches/{donorUid}: { requestId, campId }`. When a donor is matched, the app calls `runTransaction()` on this donor's specific path — Firebase guarantees only one such transaction succeeds if two coordinators attempt to match the same donor concurrently; the second is cleanly aborted, no double-booking. Entry is deleted when a match is undone or the request moves past Matched (Donated/Closed/Unfulfilled), freeing the donor for future matching.
+
+**Why:** Without this, two coordinators (potentially in different camps) could each independently read "is Ravi already matched?", both see no, and both write a match — a genuine race condition the TDD already identified as a requirement but which the existing schema structurally could not prevent. This isn't new scope; it's the minimum addition needed to make an already-approved design promise (TDD §5) actually enforceable.
+
+**Cross-checked against:** no conflicts with D-001 through D-005 or any existing DB Design node — this is a net-new top-level path, doesn't restructure anything already built.
+
+---
+
+## ID-009: Donor History `volume` field is explicitly inputted at "Donated" transition (Day 5)
+
+**Gap:** Day 5's Donor History component requires a `volume` field in the `/donor_history` write, but `volume` was never captured at request creation (only `unitsNeeded`), as what is requested and what is actually donated can differ.
+
+**Decision:** Add a simple `volume` input field (defaulting to 1) when the Coordinator clicks to transition a request to `Donated`. Do not silently inherit `unitsNeeded`.
+
+**Why:** Represents physical reality accurately. A request for 3 units might result in a 1-unit actual donation from a specific donor. Capturing this at the point of action is precise and avoids polluting the history with aspirational numbers.
+
+---
+
+## ID-010: Donor ID exposed on User Dashboard to bridge physical gap (Day 5)
+
+**Gap:** The FDD and workflow require the Camp Manager to input the Donor's UID to execute a Match, but there was no documented screen where the User could actually view their own UID to present to the Manager at walk-in. Also, Managers do not have global `/users` read access to look them up by email/name (strict RBAC scoping).
+
+**Decision:** Surfaced a highly visible "Your Donor ID" badge at the top of the User Dashboard, directly exposing `user.uid` to the authenticated user.
+
+**Why:** Without this, testing and real-world operation is blocked because the physical-to-digital handoff has a missing link. It securely solves the problem (the user only sees their own ID, and the manager doesn't need global lookup privileges) while strictly honoring the established RBAC architecture.
+
+---
+
+## ID-011: Server-side 90-day Eligibility Guard implemented via DB Rules (Day 5)
+
+**Requirement:** The FDD explicitly states under the Verified state guard condition that a donor must meet the "last donation gap ≥ 90 days" requirement.
+
+**Decision:** The initial implementation enforced this only in the Service layer (client-side), which was vulnerable to raw API bypasses. To fulfill the FDD requirement securely, we implemented a server-side DB rule check. Because DB rules cannot query dynamic lists, a new denormalized node `/donor_eligibility/{donorUid}/lastDonationDate` was created. The `matchDonor` transaction now includes a strict DB rule requiring that `(now - lastDonationDate >= 90 days)`.
+
+**Why:** This mathematically guarantees the stated FDD requirement at the database level, preventing any client-side overrides or DevTools exploits.
