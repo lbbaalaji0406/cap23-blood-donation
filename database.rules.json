@@ -21,9 +21,10 @@
     "transactions": {
       "donation_request": {
         "$campId": {
-          ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId || data.child('matchedDonorId').val() == auth.uid)",
+          ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId)",
           ".indexOn": ["createdAt"],
           "$requestId": {
+            ".read": "auth != null && data.child('matchedDonorId').val() == auth.uid",
             ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId)) && newData.child('recipientName').exists() && newData.child('blood_groupId').exists() && ((!data.exists() && newData.child('status').val() == 'Registered') || (data.exists() && (newData.child('status').val() == data.child('status').val() || (data.child('status').val() == 'Registered' && newData.child('status').val() == 'Verified') || (data.child('status').val() == 'Verified' && newData.child('status').val() == 'Matched' && newData.child('matchedDonorId').exists() && (!root.child('donor_eligibility').child(newData.child('matchedDonorId').val()).child('lastDonationDate').exists() || (now - root.child('donor_eligibility').child(newData.child('matchedDonorId').val()).child('lastDonationDate').val() >= 7776000000))) || (data.child('status').val() == 'Matched' && newData.child('status').val() == 'Donated') || (root.child('users').child(auth.uid).child('role').val() == 'Admin' && ((data.child('status').val() == 'Donated' && newData.child('status').val() == 'Closed') || (data.child('status').val() == 'Registered' && newData.child('status').val() == 'Unfulfilled') || (data.child('status').val() == 'Verified' && newData.child('status').val() == 'Unfulfilled'))))))"
           }
         }
@@ -32,7 +33,7 @@
 
     "active_donor_matches": {
       "$donorUid": {
-        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager')",
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager' || auth.uid == $donorUid)",
         ".write": "(auth != null && root.child('users').child(auth.uid).child('role').val() == 'Admin') || (auth != null && root.child('users').child(auth.uid).child('role').val() == 'Manager' && newData.exists() && newData.child('campId').val() == root.child('users').child(auth.uid).child('campId').val()) || (auth != null && root.child('users').child(auth.uid).child('role').val() == 'Manager' && !newData.exists() && data.child('campId').val() == root.child('users').child(auth.uid).child('campId').val())"
       }
     },
@@ -55,14 +56,14 @@
     "comments": {
       "$transactionId": {
         ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val() || root.child('transactions/donation_request/' + data.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('transactions/donation_request/' + data.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)"
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('transactions/donation_request/' + newData.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)"
       }
     },
 
     "attachments": {
       "$transactionId": {
         ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val() || root.child('transactions/donation_request/' + data.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('transactions/donation_request/' + data.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)"
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('transactions/donation_request/' + newData.child('campId').val() + '/' + $transactionId + '/matchedDonorId').val() == auth.uid)"
       }
     },
 
