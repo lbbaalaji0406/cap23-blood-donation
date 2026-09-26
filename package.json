@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "seed:demo": "node seed-hospital-user.mjs",
+    "test:hospital": "node test-hospital-actor.mjs",
+    "test:cooldowns": "node test-component-cooldowns.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",
