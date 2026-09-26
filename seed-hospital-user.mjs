@@ -1,27 +1,33 @@
-import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, set, connectDatabaseEmulator } from 'firebase/database';
-import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { initializeApp } from 'firebase-admin/app';
+import { getDatabase } from 'firebase-admin/database';
+import { getAuth } from 'firebase-admin/auth';
+
+process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 
 const app = initializeApp({
-  apiKey: "fake-api-key",
   projectId: "cap23-blood-donation",
   databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation-default-rtdb"
 });
 const db = getDatabase(app);
-connectDatabaseEmulator(db, '127.0.0.1', 9000);
 const auth = getAuth(app);
-connectAuthEmulator(auth, 'http://127.0.0.1:9099');
 
 async function getOrCreateUser(email, password, displayName) {
   try {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    console.log(`[Created] ${email} (UID: ${cred.user.uid})`);
-    return cred.user.uid;
+    const userRecord = await auth.getUserByEmail(email);
+    console.log(`[Existing] ${email} (UID: ${userRecord.uid})`);
+    await auth.updateUser(userRecord.uid, { password, displayName });
+    return userRecord.uid;
   } catch (e) {
-    if (e.code === 'auth/email-already-in-use') {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      console.log(`[Existing] ${email} (UID: ${cred.user.uid})`);
-      return cred.user.uid;
+    if (e.code === 'auth/user-not-found') {
+      const userRecord = await auth.createUser({
+        email,
+        password,
+        displayName,
+        emailVerified: true
+      });
+      console.log(`[Created] ${email} (UID: ${userRecord.uid})`);
+      return userRecord.uid;
     }
     throw e;
   }
@@ -33,28 +39,28 @@ async function seed() {
 
   // 1. Seed Masters (Hospital, Camp, Blood Groups)
   console.log("Seeding Master Data...");
-  await set(ref(db, 'masters/hospital/HOS001'), {
+  await db.ref('masters/hospital/HOS001').set({
     name: 'SRM Medical College Hospital',
     code: 'HOS001',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await set(ref(db, 'masters/hospital/HOS002'), {
+  await db.ref('masters/hospital/HOS002').set({
     name: 'Apollo Speciality Hospital',
     code: 'HOS002',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await set(ref(db, 'masters/camp/CAMP001'), {
+  await db.ref('masters/camp/CAMP001').set({
     name: 'SRM Blood Bank Main Camp',
     code: 'CAMP001',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await set(ref(db, 'masters/camp/CAMP002'), {
+  await db.ref('masters/camp/CAMP002').set({
     name: 'Tambaram Community Center Camp',
     code: 'CAMP002',
     active: true,
@@ -65,7 +71,7 @@ async function seed() {
 
   // 2. Admin User
   const adminUid = await getOrCreateUser("admin@example.com", password, "Admin User");
-  await set(ref(db, `users/${adminUid}`), {
+  await db.ref(`users/${adminUid}`).set({
     email: "admin@example.com",
     name: "Admin User",
     role: "Admin",
@@ -75,7 +81,7 @@ async function seed() {
 
   // 3. Hospital User
   const hospUid = await getOrCreateUser("hospital@example.com", password, "Dr. Ramesh (SRM Hospital)");
-  await set(ref(db, `users/${hospUid}`), {
+  await db.ref(`users/${hospUid}`).set({
     email: "hospital@example.com",
     name: "Dr. Ramesh (Blood Bank Incharge)",
     role: "Hospital",
@@ -86,7 +92,7 @@ async function seed() {
 
   // 4. Manager User (Camp Coordinator)
   const mgrUid = await getOrCreateUser("manager@example.com", password, "Camp Coordinator");
-  await set(ref(db, `users/${mgrUid}`), {
+  await db.ref(`users/${mgrUid}`).set({
     email: "manager@example.com",
     name: "Suresh (Camp Coordinator)",
     role: "Manager",
@@ -97,7 +103,7 @@ async function seed() {
 
   // 5. Donor User
   const donorUid = await getOrCreateUser("donor@example.com", password, "Volunteer Donor");
-  await set(ref(db, `users/${donorUid}`), {
+  await db.ref(`users/${donorUid}`).set({
     email: "donor@example.com",
     name: "Priya (Volunteer Donor)",
     role: "Donor",

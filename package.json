@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "emulators": "npx -y firebase-tools emulators:start",
     "seed:demo": "node seed-hospital-user.mjs",
     "test:hospital": "node test-hospital-actor.mjs",
     "test:cooldowns": "node test-component-cooldowns.mjs"
