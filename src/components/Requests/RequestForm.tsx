@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthProvider';
 import { requestService } from '../../services/requestService';
 import type { DonationRequest, UrgencyLevel } from '../../services/requestService';
-import { getCamps, getBloodGroups, getHospitals } from '../../services/masterService';
+import { getCamps, getBloodGroups, getHospitals, DEFAULT_BLOOD_GROUPS } from '../../services/masterService';
 import type { Camp, BloodGroup, Hospital } from '../../services/masterService';
 
 export const RequestForm = () => {
@@ -18,7 +18,7 @@ export const RequestForm = () => {
 
   // Master data for dropdowns
   const [camps, setCamps] = useState<Record<string, Camp>>({});
-  const [bloodGroups, setBloodGroups] = useState<Record<string, BloodGroup>>({});
+  const [bloodGroups, setBloodGroups] = useState<Record<string, BloodGroup>>(DEFAULT_BLOOD_GROUPS);
   const [hospitals, setHospitals] = useState<Record<string, Hospital>>({});
 
   // Form State
@@ -160,9 +160,12 @@ export const RequestForm = () => {
               className="w-full rounded-lg border-slate-300 border p-2 focus:border-indigo-500 focus:ring-indigo-500 outline-none"
             >
               <option value="">-- Select Blood Group --</option>
-              {Object.entries(bloodGroups).map(([key, bg]) => (
-                <option key={key} value={key}>{bg.name}</option>
-              ))}
+              {Object.entries(bloodGroups && Object.keys(bloodGroups).length > 0 ? bloodGroups : DEFAULT_BLOOD_GROUPS)
+                .filter(([, bg]) => bg.active !== false)
+                .sort((a, b) => a[1].code.localeCompare(b[1].code))
+                .map(([key, bg]) => (
+                  <option key={key} value={key}>{bg.code} ({bg.name})</option>
+                ))}
             </select>
           </div>
           <div>

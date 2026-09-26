@@ -37,3 +37,4 @@ firebase-debug.*.log
 serviceAccountKey*.json
 functions/lib/
 *.zip
+*.lnk

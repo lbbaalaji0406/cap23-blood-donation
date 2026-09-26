@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthProvider';
 import { hospitalService } from '../../services/hospitalService';
-import { getCamps, getBloodGroups, getHospitals } from '../../services/masterService';
+import { getCamps, getBloodGroups, getHospitals, DEFAULT_BLOOD_GROUPS } from '../../services/masterService';
 import type { Camp, BloodGroup, Hospital } from '../../services/masterService';
 import type { UrgencyLevel } from '../../services/requestService';
 import { AlertCircle, CheckCircle2, Building2, Droplet, User, ArrowLeft } from 'lucide-react';
@@ -22,7 +22,7 @@ export const HospitalRequisitionForm: React.FC<HospitalRequisitionFormProps> = (
   const { profile } = useAuth();
 
   const [camps, setCamps] = useState<Record<string, Camp>>({});
-  const [bloodGroups, setBloodGroups] = useState<Record<string, BloodGroup>>({});
+  const [bloodGroups, setBloodGroups] = useState<Record<string, BloodGroup>>(DEFAULT_BLOOD_GROUPS);
   const [hospitals, setHospitals] = useState<Record<string, Hospital>>({});
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
@@ -238,14 +238,15 @@ export const HospitalRequisitionForm: React.FC<HospitalRequisitionFormProps> = (
                 required
                 value={blood_groupId}
                 onChange={(e) => setBloodGroupId(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm font-medium"
+                className="w-full px-3.5 py-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm font-medium cursor-pointer"
               >
                 <option value="">-- Select Blood Group --</option>
-                {Object.entries(bloodGroups)
+                {Object.entries(bloodGroups && Object.keys(bloodGroups).length > 0 ? bloodGroups : DEFAULT_BLOOD_GROUPS)
                   .filter(([, bg]) => bg.active)
+                  .sort((a, b) => a[1].code.localeCompare(b[1].code))
                   .map(([id, bg]) => (
                     <option key={id} value={id}>
-                      {bg.code} ({bg.name})
+                      {bg.code} — {bg.name}
                     </option>
                   ))}
               </select>

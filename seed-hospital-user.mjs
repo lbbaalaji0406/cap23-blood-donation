@@ -67,7 +67,19 @@ async function seed() {
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  console.log("✓ Masters seeded (Hospitals & Camps)\n");
+
+  const bloodGroups = {
+    A_plus: { name: 'A Positive', code: 'A+', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['A+', 'AB+'] },
+    A_minus: { name: 'A Negative', code: 'A-', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['A+', 'A-', 'AB+', 'AB-'] },
+    B_plus: { name: 'B Positive', code: 'B+', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['B+', 'AB+'] },
+    B_minus: { name: 'B Negative', code: 'B-', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['B+', 'B-', 'AB+', 'AB-'] },
+    AB_plus: { name: 'AB Positive', code: 'AB+', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['AB+'] },
+    AB_minus: { name: 'AB Negative', code: 'AB-', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['AB+', 'AB-'] },
+    O_plus: { name: 'O Positive', code: 'O+', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['O+', 'A+', 'B+', 'AB+'] },
+    O_minus: { name: 'O Negative', code: 'O-', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'] }
+  };
+  await db.ref('masters/blood_group').set(bloodGroups);
+  console.log("✓ Masters seeded (Hospitals, Camps, & Blood Groups)\n");
 
   // 2. Admin User
   const adminUid = await getOrCreateUser("admin@example.com", password, "Admin User");

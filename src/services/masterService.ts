@@ -51,9 +51,27 @@ export const deleteBloodGroup = async (code: string) => {
   await remove(ref(db, `masters/blood_group/${sanitizeId(code)}`));
 };
 
+export const DEFAULT_BLOOD_GROUPS: Record<string, BloodGroup> = {
+  A_plus: { name: 'A Positive', code: 'A+', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['A+', 'AB+'] },
+  A_minus: { name: 'A Negative', code: 'A-', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['A+', 'A-', 'AB+', 'AB-'] },
+  B_plus: { name: 'B Positive', code: 'B+', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['B+', 'AB+'] },
+  B_minus: { name: 'B Negative', code: 'B-', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['B+', 'B-', 'AB+', 'AB-'] },
+  AB_plus: { name: 'AB Positive', code: 'AB+', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['AB+'] },
+  AB_minus: { name: 'AB Negative', code: 'AB-', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['AB+', 'AB-'] },
+  O_plus: { name: 'O Positive', code: 'O+', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['O+', 'A+', 'B+', 'AB+'] },
+  O_minus: { name: 'O Negative', code: 'O-', active: true, createdAt: '2026-01-01T00:00:00.000Z', createdBy: 'system', compatibleRecipients: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'] }
+};
+
 export const getBloodGroups = async (): Promise<Record<string, BloodGroup>> => {
-  const snapshot = await get(ref(db, 'masters/blood_group'));
-  return snapshot.exists() ? snapshot.val() : {};
+  try {
+    const snapshot = await get(ref(db, 'masters/blood_group'));
+    if (snapshot.exists() && Object.keys(snapshot.val() || {}).length > 0) {
+      return snapshot.val();
+    }
+  } catch (err) {
+    console.warn('Could not read masters/blood_group, falling back to defaults:', err);
+  }
+  return DEFAULT_BLOOD_GROUPS;
 };
 
 export interface Camp {
