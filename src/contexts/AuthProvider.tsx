@@ -11,6 +11,8 @@ export interface UserProfile {
   name: string;
   role: Role;
   campId?: string;
+  bloodGroup?: string;
+  bloodGroupVerified?: boolean;
   createdAt: string;
 }
 

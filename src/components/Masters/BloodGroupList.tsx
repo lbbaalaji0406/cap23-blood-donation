@@ -1,11 +1,8 @@
-import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
 import type { BloodGroup } from '../../services/masterService';
 import { CheckCircle2, XCircle } from 'lucide-react';
 
 export const BloodGroupList = () => {
-  const { profile } = useAuth();
-  const isAdmin = profile?.role === 'Admin';
   const { data, loading, error } = useRTDB<Record<string, BloodGroup>>('masters/blood_group');
 
   const groups = data ? Object.entries(data).map(([id, val]) => ({ id, ...val })) : [];

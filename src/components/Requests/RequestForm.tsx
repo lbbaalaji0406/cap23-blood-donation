@@ -26,6 +26,7 @@ export const RequestForm = () => {
   const [unitsNeeded, setUnitsNeeded] = useState<number>(1);
   const [urgency, setUrgency] = useState<UrgencyLevel>('Routine');
   const [blood_groupId, setBloodGroupId] = useState('');
+  const [componentType, setComponentType] = useState<'WholeBlood' | 'Platelets' | 'Plasma'>('WholeBlood');
   const [recipientHospitalId, setRecipientHospitalId] = useState('');
   const [campId, setCampId] = useState(''); // Only visible/editable for Admin on CREATE
 
@@ -48,6 +49,7 @@ export const RequestForm = () => {
             setUnitsNeeded(req.unitsNeeded);
             setUrgency(req.urgency);
             setBloodGroupId(req.blood_groupId);
+            setComponentType(req.componentType || 'WholeBlood');
             setRecipientHospitalId(req.recipientHospitalId);
             setCampId(req.campId || '');
           } else {
@@ -83,6 +85,7 @@ export const RequestForm = () => {
         unitsNeeded,
         urgency,
         blood_groupId,
+        componentType,
         recipientHospitalId,
       };
 
@@ -147,7 +150,7 @@ export const RequestForm = () => {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Blood Group</label>
             <select
@@ -160,6 +163,18 @@ export const RequestForm = () => {
               {Object.entries(bloodGroups).map(([key, bg]) => (
                 <option key={key} value={key}>{bg.name}</option>
               ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Blood Component</label>
+            <select
+              value={componentType}
+              onChange={(e) => setComponentType(e.target.value as any)}
+              className="w-full rounded-lg border-slate-300 border p-2 focus:border-indigo-500 focus:ring-indigo-500 outline-none"
+            >
+              <option value="WholeBlood">Whole Blood / Red Cells</option>
+              <option value="Platelets">Platelets (Apheresis)</option>
+              <option value="Plasma">Fresh Frozen Plasma</option>
             </select>
           </div>
           <div>

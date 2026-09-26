@@ -9,6 +9,7 @@ interface DonationRecord {
   requestId: string;
   donationDate: number;
   volume: number;
+  componentType?: 'WholeBlood' | 'Platelets' | 'Plasma';
   campId: string;
   verifiedBy: string;
 }
@@ -60,18 +61,53 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
   if (loading) return <div className="p-4 text-slate-500">Loading history...</div>;
   if (error) return <div className="p-4 text-rose-600">{error}</div>;
 
-  const mostRecent = history.length > 0 ? history[0].donationDate : null;
-  let nextEligibleDate = null;
-  let isEligible = true;
+  const now = Date.now();
+  const msInDay = 24 * 60 * 60 * 1000;
 
-  if (mostRecent) {
-    const nextDate = new Date(mostRecent);
-    nextDate.setDate(nextDate.getDate() + 90);
-    nextEligibleDate = nextDate;
-    if (nextDate.getTime() > Date.now()) {
-      isEligible = false;
+  let latestWholeBlood = 0;
+  let latestPlatelets = 0;
+  let latestPlasma = 0;
+  let plateletsIn7Days = 0;
+  let plateletsIn365Days = 0;
+
+  history.forEach((rec) => {
+    const comp = rec.componentType || 'WholeBlood';
+    const d = rec.donationDate;
+    if (comp === 'WholeBlood') {
+      if (d > latestWholeBlood) latestWholeBlood = d;
+    } else if (comp === 'Platelets') {
+      if (d > latestPlatelets) latestPlatelets = d;
+      if (now - d < 7 * msInDay) plateletsIn7Days++;
+      if (now - d < 365 * msInDay) plateletsIn365Days++;
+    } else if (comp === 'Plasma') {
+      if (d > latestPlasma) latestPlasma = d;
     }
-  }
+  });
+
+  // 1. Whole Blood Next Eligible Date
+  // Requires: 90d from WB, 28d from Platelets (DGHS), 28d from Plasma
+  const wbBlock1 = latestWholeBlood > 0 ? latestWholeBlood + 90 * msInDay : 0;
+  const wbBlock2 = latestPlatelets > 0 ? latestPlatelets + 28 * msInDay : 0;
+  const wbBlock3 = latestPlasma > 0 ? latestPlasma + 28 * msInDay : 0;
+  const nextWbTime = Math.max(wbBlock1, wbBlock2, wbBlock3);
+  const isWbEligible = nextWbTime <= now;
+
+  // 2. Platelets Next Eligible Date
+  // Requires: 28d from WB (DGHS), 7d from Platelets, 28d from Plasma, weekly < 2, annual < 24
+  const plBlock1 = latestWholeBlood > 0 ? latestWholeBlood + 28 * msInDay : 0;
+  const plBlock2 = latestPlatelets > 0 ? latestPlatelets + 7 * msInDay : 0;
+  const plBlock3 = latestPlasma > 0 ? latestPlasma + 28 * msInDay : 0;
+  const nextPlTime = Math.max(plBlock1, plBlock2, plBlock3);
+  const isPlCapReached = plateletsIn7Days >= 2 || plateletsIn365Days >= 24;
+  const isPlEligible = nextPlTime <= now && !isPlCapReached;
+
+  // 3. Plasma Next Eligible Date
+  // Requires: 28d from WB, 28d from Plasma, 7d from Platelets
+  const plasBlock1 = latestWholeBlood > 0 ? latestWholeBlood + 28 * msInDay : 0;
+  const plasBlock2 = latestPlasma > 0 ? latestPlasma + 28 * msInDay : 0;
+  const plasBlock3 = latestPlatelets > 0 ? latestPlatelets + 7 * msInDay : 0;
+  const nextPlasTime = Math.max(plasBlock1, plasBlock2, plasBlock3);
+  const isPlasEligible = nextPlasTime <= now;
 
   return (
     <div className="space-y-6">
@@ -79,22 +115,92 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
          <div className="flex justify-between items-end">
            <div>
              <h1 className="text-2xl font-bold text-slate-900">My Donation History</h1>
-             <p className="text-slate-600 mt-1">Track your past donations and eligibility</p>
+             <p className="text-slate-600 mt-1">Track your past donations and component-specific eligibility</p>
            </div>
          </div>
       )}
 
-      {/* Eligibility Card */}
-      <div className={`p-6 rounded-xl border shadow-sm ${isEligible ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-        <h3 className={`text-lg font-bold mb-1 ${isEligible ? 'text-emerald-900' : 'text-amber-900'}`}>
-          {isEligible ? 'You are eligible to donate!' : 'Not currently eligible'}
-        </h3>
-        <p className={`text-sm ${isEligible ? 'text-emerald-700' : 'text-amber-700'}`}>
-          {isEligible 
-            ? 'It has been more than 90 days since your last donation, or you have no prior donations recorded.'
-            : `You must wait 90 days between donations. You will be eligible again on ${nextEligibleDate?.toLocaleDateString()}.`
-          }
-        </p>
+      {/* Component-Specific Eligibility Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Whole Blood Card */}
+        <div className={`p-5 rounded-xl border shadow-sm flex flex-col justify-between ${isWbEligible ? 'bg-blue-50/60 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Whole Blood</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isWbEligible ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {isWbEligible ? 'Eligible' : 'Cooldown'}
+              </span>
+            </div>
+            <h4 className="text-base font-bold text-slate-900">
+              {isWbEligible ? 'Eligible to Donate Now' : `Eligible on ${new Date(nextWbTime).toLocaleDateString()}`}
+            </h4>
+            <p className="text-xs text-slate-600 mt-1">
+              90-day interval for whole blood; 28-day gap following apheresis (DGHS standard).
+            </p>
+          </div>
+          {!isWbEligible && (
+            <div className="mt-3 text-xs font-medium text-amber-800">
+              {Math.ceil((nextWbTime - now) / msInDay)} days remaining
+            </div>
+          )}
+        </div>
+
+        {/* Platelets Card */}
+        <div className={`p-5 rounded-xl border shadow-sm flex flex-col justify-between ${isPlEligible ? 'bg-purple-50/60 border-purple-200' : 'bg-slate-50 border-slate-200'}`}>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-800">Platelets (Apheresis)</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isPlEligible ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {isPlEligible ? 'Eligible' : isPlCapReached ? 'Cap Reached' : 'Cooldown'}
+              </span>
+            </div>
+            <h4 className="text-base font-bold text-slate-900">
+              {isPlEligible 
+                ? 'Eligible to Donate Now' 
+                : isPlCapReached 
+                  ? 'Annual or Weekly Cap Reached'
+                  : `Eligible on ${new Date(nextPlTime).toLocaleDateString()}`}
+            </h4>
+            <p className="text-xs text-slate-600 mt-1">
+              7-day interval; max 2 in 7 days & 24 in 365 days (NBTC / Schedule F).
+            </p>
+          </div>
+          <div className="mt-3 pt-3 border-t border-purple-100">
+            <div className="flex justify-between text-xs text-slate-600 mb-1">
+              <span>Annual Quota</span>
+              <span className="font-semibold text-purple-900">{plateletsIn365Days} / 24 used</span>
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+              <div 
+                className="bg-purple-600 h-1.5 rounded-full" 
+                style={{ width: `${Math.min(100, (plateletsIn365Days / 24) * 100)}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        {/* Plasma Card */}
+        <div className={`p-5 rounded-xl border shadow-sm flex flex-col justify-between ${isPlasEligible ? 'bg-amber-50/60 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-800">Fresh Frozen Plasma</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isPlasEligible ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                {isPlasEligible ? 'Eligible' : 'Cooldown'}
+              </span>
+            </div>
+            <h4 className="text-base font-bold text-slate-900">
+              {isPlasEligible ? 'Eligible to Donate Now' : `Eligible on ${new Date(nextPlasTime).toLocaleDateString()}`}
+            </h4>
+            <p className="text-xs text-slate-600 mt-1">
+              28-day interval for plasma replenishment.
+            </p>
+          </div>
+          {!isPlasEligible && (
+            <div className="mt-3 text-xs font-medium text-amber-800">
+              {Math.ceil((nextPlasTime - now) / msInDay)} days remaining
+            </div>
+          )}
+        </div>
       </div>
 
       {/* History Table */}
@@ -108,28 +214,49 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Component</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Camp</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Volume (Units)</th>
+                <th className="px-6 py-3 text-left text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Volume (Units)</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Request ID</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-200">
-              {history.map((record) => (
-                <tr key={record.requestId}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">
-                    {new Date(record.donationDate).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {camps[record.campId]?.name || record.campId}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    {record.volume}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400 font-mono">
-                    {record.requestId.slice(-6)}
-                  </td>
-                </tr>
-              ))}
+              {history.map((record) => {
+                const comp = record.componentType || 'WholeBlood';
+                return (
+                  <tr key={record.requestId}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900">
+                      {new Date(record.donationDate).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {comp === 'Platelets' && (
+                        <span className="text-xs font-medium bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full">
+                          Platelets (Apheresis)
+                        </span>
+                      )}
+                      {comp === 'Plasma' && (
+                        <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full">
+                          Plasma
+                        </span>
+                      )}
+                      {comp === 'WholeBlood' && (
+                        <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full">
+                          Whole Blood
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                      {camps[record.campId]?.name || record.campId}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                      {record.volume}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400 font-mono">
+                      {record.requestId.slice(-6)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

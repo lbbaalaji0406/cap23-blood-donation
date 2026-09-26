@@ -134,3 +134,36 @@ Numbered `ID-001`, `ID-002`, etc. — sequential, not tied to any particular day
 **Decision:** The initial implementation enforced this only in the Service layer (client-side), which was vulnerable to raw API bypasses. To fulfill the FDD requirement securely, we implemented a server-side DB rule check. Because DB rules cannot query dynamic lists, a new denormalized node `/donor_eligibility/{donorUid}/lastDonationDate` was created. The `matchDonor` transaction now includes a strict DB rule requiring that `(now - lastDonationDate >= 90 days)`.
 
 **Why:** This mathematically guarantees the stated FDD requirement at the database level, preventing any client-side overrides or DevTools exploits.
+
+---
+
+## ID-012: Donor Role Scoped Read for Active Match on User Dashboard
+
+**Requirement:** A matched donor must be able to view their pending request details to confirm participation without gaining arbitrary read access to other requests in the camp.
+
+**Decision:** We permitted donors to read `/active_donor_matches/{auth.uid}`, and configured RTDB security rules so that donors can only read requests where their UID matches an active lock or record in `/matches/{requestId}/{donorUid}`.
+
+**Why:** Balances donor transparency with strict tenant and camp privacy boundaries.
+
+---
+
+## ID-013: Component-Specific Cooldowns, Cross-Component Matrix, and Apheresis Frequency Caps
+
+**Requirement:** Medical transfusion reality requires distinct inter-donation intervals for different blood components (Whole Blood, Platelets via Apheresis, and Fresh Frozen Plasma) instead of a universal 90-day cooldown.
+
+**Decision:**
+1. **Data Model:** Added `componentType?: 'WholeBlood' | 'Platelets' | 'Plasma'` to `transactions/donation_request` and `donor_history`. Defaults defensively to `'WholeBlood'` for complete backward compatibility.
+2. **Statutory Platelet Caps (Confirmed NBTC / Schedule F):**
+   - Minimum interval: 48 hours (statutory minimum; our system uses a conservative 7-day safe inter-donation interval for voluntary community camps).
+   - Weekly cap: Maximum 2 plateletpheresis procedures in any 7-day rolling window.
+   - Annual cap: Maximum 24 plateletpheresis procedures in any 365-day rolling window.
+3. **Cross-Component Deferral Rules (MoHFW / DGHS Guidelines):**
+   - Whole Blood $\rightarrow$ Plateletpheresis: 28-day wait.
+   - Plateletpheresis $\rightarrow$ Whole Blood: 28-day wait (provided RBCs were completely reinfused).
+   - *Honest Caveat:* While the 48h, $\le 2$/week, and $\le 24$/year platelet caps are confirmed from primary NBTC / Schedule F statutory text, the 28-day cross-component rules and 90-day whole blood interval are cross-referenced against MoHFW guidelines and the DGHS Transfusion Medicine Technical Manual. All intervals are isolated in a centralized `TRANSFUSION_CONFIG` dictionary so blood centres can easily calibrate to institutional SOPs.
+4. **Gender Differential Explicitly Deferred:**
+   - Although Indian guidelines specify a 90-day whole-blood interval for males and 120-day for females, the `users` schema currently has no `gender` or `sex` field. The system strictly maintains a universal 90-day cooldown across all donors, and explicitly defers gender-based differentials until demographic attributes are added to user profiles.
+5. **Backend & UI Enforcement:**
+   - Evaluated server-side in `handleMatchDonor` and candidate filter `findNextEligibleDonor`.
+   - UI surfaces component badges, countdowns per component, and a platelet quota bar in `DonorHistoryView.tsx`.
+

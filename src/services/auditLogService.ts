@@ -1,4 +1,4 @@
-import { ref, push, get, serverTimestamp } from 'firebase/database';
+import { ref, push, get, serverTimestamp, query, orderByChild, equalTo } from 'firebase/database';
 import { db as database } from '../firebase';
 
 export interface AuditLog {
@@ -9,9 +9,11 @@ export interface AuditLog {
   action: string;
   beforeStatus?: string;
   afterStatus?: string;
-  outcome: 'Success' | 'Failed';
+  status: string;
+  outcome?: 'Success' | 'Failed';
   failureReason?: string;
   createdAt: number;
+  timestamp: number;
 }
 
 export const auditLogService = {
@@ -56,7 +58,15 @@ export const auditLogService = {
     const results: AuditLog[] = [];
     if (snapshot.exists()) {
       snapshot.forEach((child) => {
-        results.push({ id: child.key, ...child.val() } as AuditLog);
+        const val = child.val();
+        const ts = Number(val.createdAt || val.timestamp || 0);
+        results.push({
+          id: child.key,
+          ...val,
+          status: val.status || val.outcome || 'Success',
+          createdAt: ts,
+          timestamp: ts,
+        });
       });
     }
     

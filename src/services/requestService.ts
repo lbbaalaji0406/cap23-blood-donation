@@ -10,6 +10,7 @@ export interface DonationRequest {
   recipientName: string;
   recipientHospitalId: string;
   blood_groupId: string;
+  componentType?: 'WholeBlood' | 'Platelets' | 'Plasma';
   unitsNeeded: number;
   urgency: UrgencyLevel;
   status: RequestStatus;
@@ -93,6 +94,7 @@ export const requestService = {
       
       const newRequest = {
         ...payload,
+        componentType: payload.componentType || 'WholeBlood',
         status: 'Registered',
         createdBy: uid,
         createdAt: serverTimestamp(),

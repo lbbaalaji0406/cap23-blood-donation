@@ -123,8 +123,6 @@ export const RequestDetail = () => {
         request.id,
         request.status,
         newStatus,
-        user.uid,
-        profile.name,
         request.matchedDonorId // Pass donor to clean up lock if needed
       );
       await fetchAll();
@@ -178,9 +176,7 @@ export const RequestDetail = () => {
       await workflowService.matchDonor(
         campId,
         request.id,
-        donorUidToMatch.trim(),
-        user.uid,
-        profile.name
+        donorUidToMatch.trim()
       );
       setShowMatchPrompt(false);
       setDonorUidToMatch('');
@@ -260,6 +256,21 @@ export const RequestDetail = () => {
             &larr; Back
           </button>
           <h1 className="text-2xl font-bold text-slate-900">Request {request.id.slice(-6)}</h1>
+          {request.componentType === 'Platelets' && (
+            <span className="text-xs font-bold uppercase tracking-wider bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full border border-purple-200">
+              Platelets
+            </span>
+          )}
+          {request.componentType === 'Plasma' && (
+            <span className="text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full border border-amber-200">
+              Plasma
+            </span>
+          )}
+          {(!request.componentType || request.componentType === 'WholeBlood') && (
+            <span className="text-xs font-bold uppercase tracking-wider bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full border border-blue-200">
+              Whole Blood
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {error && <span className="text-rose-600 text-sm font-medium">{error}</span>}
@@ -499,9 +510,26 @@ export const RequestDetail = () => {
                 <div className="text-base text-slate-900">{camps[request.campId || '']?.name || request.campId}</div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Blood Group</label>
-                <div className="text-base font-medium text-indigo-700 bg-indigo-50 inline-block px-2 py-0.5 rounded">
-                  {bloodGroups[request.blood_groupId]?.name || request.blood_groupId}
+                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Blood Group & Component</label>
+                <div className="flex items-center gap-2">
+                  <div className="text-base font-medium text-indigo-700 bg-indigo-50 inline-block px-2 py-0.5 rounded">
+                    {bloodGroups[request.blood_groupId]?.name || request.blood_groupId}
+                  </div>
+                  {request.componentType === 'Platelets' && (
+                    <span className="text-xs font-medium bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                      Platelets
+                    </span>
+                  )}
+                  {request.componentType === 'Plasma' && (
+                    <span className="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                      Plasma
+                    </span>
+                  )}
+                  {(!request.componentType || request.componentType === 'WholeBlood') && (
+                    <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                      Whole Blood
+                    </span>
+                  )}
                 </div>
               </div>
               <div>

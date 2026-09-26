@@ -19,6 +19,118 @@ export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[
   }
 };
 
+export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
+
+/**
+ * Transfusion Cooldown & Safety Configuration
+ * Sources:
+ * 1. Drugs and Cosmetics Rules, 1945, Schedule F, Part XII-B (Apheresis statutory limits)
+ * 2. National Standards for Blood Centres / DGHS Transfusion Medicine Technical Manual (MoHFW)
+ */
+export const TRANSFUSION_CONFIG = {
+  // Standalone inter-donation intervals (in days)
+  WHOLE_BLOOD_INTERVAL_DAYS: 90,     // Universal standard for Whole Blood (MoHFW)
+  PLATELET_INTERVAL_DAYS: 7,          // 7-day safe camp interval (statutory min is 48 hours)
+  PLASMA_INTERVAL_DAYS: 28,          // Standard plasma replenishment interval
+
+  // Cross-component intervals (in days)
+  WB_TO_APHERESIS_DAYS: 28,          // Whole Blood -> Apheresis (DGHS Technical Manual)
+  APHERESIS_TO_WB_DAYS: 28,          // Apheresis -> Whole Blood (DGHS Technical Manual)
+
+  // Apheresis statutory safety caps (Drugs & Cosmetics Rules, Schedule F, Part XII-B)
+  MAX_PLATELET_DONATIONS_7_DAYS: 2,   // Max 2 times in 7 days
+  MAX_PLATELET_DONATIONS_365_DAYS: 24 // Max 24 times in 365 days
+};
+
+export interface DonorEligibilityResult {
+  isEligible: boolean;
+  reason?: string;
+  nextEligibleDate?: string;
+}
+
+export function evaluateDonorEligibility(
+  historyRecords: any[],
+  requestedComponent: BloodComponentType = 'WholeBlood',
+  now: number = Date.now()
+): DonorEligibilityResult {
+  let latestWholeBloodDate = 0;
+  let latestPlateletsDate = 0;
+  let latestPlasmaDate = 0;
+  let plateletsIn7Days = 0;
+  let plateletsIn365Days = 0;
+
+  const msInDay = 24 * 60 * 60 * 1000;
+  const sevenDaysMs = TRANSFUSION_CONFIG.PLATELET_INTERVAL_DAYS * msInDay;
+  const twentyEightDaysMs = TRANSFUSION_CONFIG.WB_TO_APHERESIS_DAYS * msInDay;
+  const ninetyDaysMs = TRANSFUSION_CONFIG.WHOLE_BLOOD_INTERVAL_DAYS * msInDay;
+  const threeSixtyFiveDaysMs = 365 * msInDay;
+
+  for (const record of historyRecords) {
+    if (!record || !record.donationDate) continue;
+    const dDate = Number(record.donationDate);
+    const comp: BloodComponentType = record.componentType || 'WholeBlood';
+
+    if (comp === 'WholeBlood') {
+      if (dDate > latestWholeBloodDate) latestWholeBloodDate = dDate;
+    } else if (comp === 'Platelets') {
+      if (dDate > latestPlateletsDate) latestPlateletsDate = dDate;
+      if (now - dDate < 7 * msInDay) plateletsIn7Days++;
+      if (now - dDate < threeSixtyFiveDaysMs) plateletsIn365Days++;
+    } else if (comp === 'Plasma') {
+      if (dDate > latestPlasmaDate) latestPlasmaDate = dDate;
+    }
+  }
+
+  if (requestedComponent === 'WholeBlood') {
+    if (latestWholeBloodDate > 0 && now - latestWholeBloodDate < ninetyDaysMs) {
+      const nextDate = new Date(latestWholeBloodDate + ninetyDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 90 days after whole blood donation. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlateletsDate > 0 && now - latestPlateletsDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestPlateletsDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days after plateletpheresis before whole blood donation (DGHS Standard). Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlasmaDate > 0 && now - latestPlasmaDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestPlasmaDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days after plasmapheresis before whole blood donation. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+  } else if (requestedComponent === 'Platelets') {
+    if (plateletsIn365Days >= TRANSFUSION_CONFIG.MAX_PLATELET_DONATIONS_365_DAYS) {
+      return { isEligible: false, reason: `Donor reached the statutory annual limit of 24 platelet donations in 365 days (Drugs & Cosmetics Rules, Schedule F, Part XII-B).` };
+    }
+    if (plateletsIn7Days >= TRANSFUSION_CONFIG.MAX_PLATELET_DONATIONS_7_DAYS) {
+      return { isEligible: false, reason: `Donor reached the statutory weekly limit of 2 platelet donations in 7 days (Drugs & Cosmetics Rules, Schedule F, Part XII-B).` };
+    }
+    if (latestWholeBloodDate > 0 && now - latestWholeBloodDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestWholeBloodDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days after whole blood donation before plateletpheresis (DGHS Standard). Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlateletsDate > 0 && now - latestPlateletsDate < sevenDaysMs) {
+      const nextDate = new Date(latestPlateletsDate + sevenDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 7 days between platelet donations. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlasmaDate > 0 && now - latestPlasmaDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestPlasmaDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days after plasmapheresis before plateletpheresis. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+  } else if (requestedComponent === 'Plasma') {
+    if (latestWholeBloodDate > 0 && now - latestWholeBloodDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestWholeBloodDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days after whole blood donation before plasmapheresis. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlasmaDate > 0 && now - latestPlasmaDate < twentyEightDaysMs) {
+      const nextDate = new Date(latestPlasmaDate + twentyEightDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 28 days between plasma donations. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+    if (latestPlateletsDate > 0 && now - latestPlateletsDate < sevenDaysMs) {
+      const nextDate = new Date(latestPlateletsDate + sevenDaysMs).toLocaleDateString();
+      return { isEligible: false, reason: `Donor must wait 7 days after plateletpheresis before plasmapheresis. Next eligible date: ${nextDate}`, nextEligibleDate: nextDate };
+    }
+  }
+
+  return { isEligible: true };
+}
+
 const emailjsServiceId = defineSecret('EMAILJS_SERVICE_ID');
 const emailjsTemplateId = defineSecret('EMAILJS_TEMPLATE_ID');
 const emailjsPublicKey = defineSecret('EMAILJS_PUBLIC_KEY');
@@ -322,14 +434,27 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
       }
       
       if (donorUid && newStatus === 'Donated') {
+        const reqSnap = await db.ref(`transactions/donation_request/${campId}/${requestId}`).once('value');
+        const reqData = reqSnap.val() || {};
+        const compType: BloodComponentType = reqData.componentType || 'WholeBlood';
+
         rootUpdates[`donor_history/${donorUid}/${requestId}`] = {
           requestId,
           donationDate: { '.sv': 'timestamp' },
           volume: volume || 1,
+          componentType: compType,
           campId,
           verifiedBy: actorUid
         };
         rootUpdates[`donor_eligibility/${donorUid}/lastDonationDate`] = { '.sv': 'timestamp' };
+
+        if (compType === 'WholeBlood') {
+          rootUpdates[`donor_eligibility/${donorUid}/lastWholeBloodDate`] = { '.sv': 'timestamp' };
+        } else if (compType === 'Platelets') {
+          rootUpdates[`donor_eligibility/${donorUid}/lastPlateletsDate`] = { '.sv': 'timestamp' };
+        } else if (compType === 'Plasma') {
+          rootUpdates[`donor_eligibility/${donorUid}/lastPlasmaDate`] = { '.sv': 'timestamp' };
+        }
 
         // Verify blood group during donation
         if (bloodGroup) {
@@ -367,36 +492,34 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
 async function handleMatchDonor(campId: string, requestId: string, donorUid: string, actorUid: string, actorName: string) {
   const db = admin.database();
   
-  // 0. Eligibility check
-  const historyRef = db.ref(`donor_history/${donorUid}`);
-  const historySnapshot = await historyRef.orderByChild('donationDate').limitToLast(1).once('value');
-  
-  if (historySnapshot.exists()) {
-    let latestDate = 0;
-    historySnapshot.forEach((child) => {
-      const record = child.val();
-      if (record.donationDate > latestDate) {
-        latestDate = record.donationDate;
-      }
-    });
-    const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
-    if (Date.now() - latestDate < ninetyDaysInMs) {
-      const nextEligibleDate = new Date(latestDate + ninetyDaysInMs).toLocaleDateString();
-      throw new functions.https.HttpsError('failed-precondition', `Donor not eligible. Wait 90 days. Next eligible date: ${nextEligibleDate}`);
-    }
-  }
-
   const requestSnap = await db.ref(`transactions/donation_request/${campId}/${requestId}`).once('value');
   if (!requestSnap.exists()) {
     throw new functions.https.HttpsError('not-found', 'Donation request not found.');
   }
   const requestDetails = requestSnap.val();
   const recipientBloodGroupId = requestDetails.blood_groupId;
+  const requestedComponent: BloodComponentType = requestDetails.componentType || 'WholeBlood';
   const unitsSecured = requestDetails.unitsSecured || 0;
   const unitsNeeded = requestDetails.unitsNeeded || 1;
   
   if (unitsSecured >= unitsNeeded) {
     throw new functions.https.HttpsError('failed-precondition', 'Donation request is already fully fulfilled.');
+  }
+
+  // 0. Eligibility check against NACO/NBTC & DGHS component cooldown matrix
+  const historyRef = db.ref(`donor_history/${donorUid}`);
+  const historySnapshot = await historyRef.once('value');
+  
+  if (historySnapshot.exists()) {
+    const historyRecords: any[] = [];
+    historySnapshot.forEach((child) => {
+      historyRecords.push(child.val());
+    });
+    const eligibility = evaluateDonorEligibility(historyRecords, requestedComponent);
+    if (!eligibility.isEligible) {
+      await logAudit(requestId, actorUid, actorName, 'MATCH_DONOR', 'Failed', eligibility.reason || 'Donor ineligible.');
+      throw new functions.https.HttpsError('failed-precondition', eligibility.reason || 'Donor is not currently eligible.');
+    }
   }
 
   // 0.5 Donor profile validation & compatibility check
@@ -474,8 +597,9 @@ async function handleMatchDonor(campId: string, requestId: string, donorUid: str
   }
 }
 
-async function findNextEligibleDonor(campId: string, requestId: string, recipientBloodGroupId: string): Promise<string | null> {
+async function findNextEligibleDonor(campId: string, requestId: string, recipientBloodGroupId: string, componentType?: BloodComponentType): Promise<string | null> {
   const db = admin.database();
+  const requestedComponent: BloodComponentType = componentType || 'WholeBlood';
   
   // 1. Get all matches for this request to know who to exclude
   const matchesSnap = await db.ref(`matches/${requestId}`).once('value');
@@ -493,7 +617,6 @@ async function findNextEligibleDonor(campId: string, requestId: string, recipien
   const eligibleDonors: string[] = [];
   
   const historySnap = await db.ref('donor_history').once('value');
-  const ninetyDaysInMs = 90 * 24 * 60 * 60 * 1000;
   const now = Date.now();
 
   usersSnap.forEach(userSnap => {
@@ -504,16 +627,16 @@ async function findNextEligibleDonor(campId: string, requestId: string, recipien
     if (excludedDonors.has(uid)) return;
     if (!data.bloodGroup || !compatibleGroups.includes(data.bloodGroup)) return;
     
-    // Check history
+    // Check history with evaluateDonorEligibility
     let isEligible = true;
     const userHistory = historySnap.child(uid);
     if (userHistory.exists()) {
-       let latestDate = 0;
+       const userRecords: any[] = [];
        userHistory.forEach(donationSnap => {
-         const d = donationSnap.val().donationDate;
-         if (d > latestDate) latestDate = d;
+         userRecords.push(donationSnap.val());
        });
-       if (now - latestDate < ninetyDaysInMs) {
+       const eligibility = evaluateDonorEligibility(userRecords, requestedComponent, now);
+       if (!eligibility.isEligible) {
          isEligible = false;
        }
     }
@@ -601,7 +724,12 @@ async function handleRespondToMatch(campId: string, requestId: string, donorUid:
 
     const urgency = requestDetails.urgency || 'Routine';
     if (urgency === 'Critical' || urgency === 'Urgent') {
-      const replacementDonor = await findNextEligibleDonor(campId, requestId, requestDetails.blood_groupId);
+      const replacementDonor = await findNextEligibleDonor(
+        campId, 
+        requestId, 
+        requestDetails.blood_groupId, 
+        requestDetails.componentType || 'WholeBlood'
+      );
       if (replacementDonor) {
         await handleMatchDonor(campId, requestId, replacementDonor, 'SYSTEM', 'Auto-Match System');
         if (urgency === 'Critical') {

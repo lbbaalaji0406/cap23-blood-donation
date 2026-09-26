@@ -33,17 +33,18 @@
 
 /transactions/
   donation_request/
-    {id}/ {
-      recipientName, recipientHospitalId,       // recipient is DATA only, not an actor
-      blood_groupId,
-      campId,                                    // FK — used for D-002 scoping check
-      status,             // Registered | Verified | Pending Response | Matched | Partially Matched | Donated | Closed | Unfulfilled
-      unfulfillableFlag,   // set by Manager, actual status transition requires Admin (D-001)
-      unitsNeeded,         // integer
-      unitsSecured,        // integer (Phase 5a)
-      needsAdminAttention, // boolean flag for urgency (Phase 5a)
-      assignedTo, createdBy, createdAt, updatedAt
-    }
+    {campId}/
+      {requestId}/ {
+        recipientName, recipientHospitalId,       // recipient is DATA only, not an actor
+        blood_groupId,
+        componentType,       // 'WholeBlood' | 'Platelets' | 'Plasma' (defaults to 'WholeBlood')
+        status,              // Registered | Verified | Pending Response | Matched | Partially Matched | Donated | Closed | Unfulfilled
+        unfulfillableFlag,   // set by Manager, actual status transition requires Admin (D-001)
+        unitsNeeded,         // integer
+        unitsSecured,        // integer (Phase 5a)
+        needsAdminAttention, // boolean flag for urgency (Phase 5a)
+        assignedTo, createdBy, createdAt, updatedAt
+      }
 
 /matches/                                        // Phase 5a Multi-Donor
   {requestId}/
@@ -57,10 +58,18 @@
     requestId, campId
   }
 
+/donor_eligibility/                              // ID-013 Component Cooldown Tracking
+  {donorUid}/ {
+    lastDonationDate,
+    lastWholeBloodDate,
+    lastPlateletsDate,
+    lastPlasmaDate
+  }
+
 /donor_history/                                  // Trainer Extension
   {donorUid}/
     {donationId}/ {
-      requestId, donationDate, volume, campId, verifiedBy
+      requestId, donationDate, volume, componentType, campId, verifiedBy
     }
 
 /comments/
