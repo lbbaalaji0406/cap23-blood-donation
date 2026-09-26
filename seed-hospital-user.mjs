@@ -9,8 +9,20 @@ const app = initializeApp({
   projectId: "cap23-blood-donation",
   databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation-default-rtdb"
 });
-const db = getDatabase(app);
+const defaultDb = getDatabase(app);
+const fallbackApp = initializeApp({
+  projectId: "cap23-blood-donation",
+  databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation"
+}, 'fallback');
+const fallbackDb = getDatabase(fallbackApp);
 const auth = getAuth(app);
+
+async function setBoth(path, value) {
+  await Promise.all([
+    defaultDb.ref(path).set(value),
+    fallbackDb.ref(path).set(value)
+  ]);
+}
 
 async function getOrCreateUser(email, password, displayName) {
   try {
@@ -38,29 +50,29 @@ async function seed() {
   const password = "password123";
 
   // 1. Seed Masters (Hospital, Camp, Blood Groups)
-  console.log("Seeding Master Data...");
-  await db.ref('masters/hospital/HOS001').set({
+  console.log("Seeding Master Data (Dual Namespace)...");
+  await setBoth('masters/hospital/HOS001', {
     name: 'SRM Medical College Hospital',
     code: 'HOS001',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await db.ref('masters/hospital/HOS002').set({
+  await setBoth('masters/hospital/HOS002', {
     name: 'Apollo Speciality Hospital',
     code: 'HOS002',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await db.ref('masters/camp/CAMP001').set({
+  await setBoth('masters/camp/CAMP001', {
     name: 'SRM Blood Bank Main Camp',
     code: 'CAMP001',
     active: true,
     createdAt: new Date().toISOString(),
     createdBy: 'system'
   });
-  await db.ref('masters/camp/CAMP002').set({
+  await setBoth('masters/camp/CAMP002', {
     name: 'Tambaram Community Center Camp',
     code: 'CAMP002',
     active: true,
@@ -78,12 +90,12 @@ async function seed() {
     O_plus: { name: 'O Positive', code: 'O+', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['O+', 'A+', 'B+', 'AB+'] },
     O_minus: { name: 'O Negative', code: 'O-', active: true, createdAt: new Date().toISOString(), createdBy: 'system', compatibleRecipients: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'] }
   };
-  await db.ref('masters/blood_group').set(bloodGroups);
-  console.log("✓ Masters seeded (Hospitals, Camps, & Blood Groups)\n");
+  await setBoth('masters/blood_group', bloodGroups);
+  console.log("✓ Masters seeded (Hospitals, Camps, & Blood Groups across both namespaces)\n");
 
   // 2. Admin User
   const adminUid = await getOrCreateUser("admin@example.com", password, "Admin User");
-  await db.ref(`users/${adminUid}`).set({
+  await setBoth(`users/${adminUid}`, {
     email: "admin@example.com",
     name: "Admin User",
     role: "Admin",
@@ -93,7 +105,7 @@ async function seed() {
 
   // 3. Hospital User
   const hospUid = await getOrCreateUser("hospital@example.com", password, "Dr. Ramesh (SRM Hospital)");
-  await db.ref(`users/${hospUid}`).set({
+  await setBoth(`users/${hospUid}`, {
     email: "hospital@example.com",
     name: "Dr. Ramesh (Blood Bank Incharge)",
     role: "Hospital",
@@ -104,7 +116,7 @@ async function seed() {
 
   // 4. Manager User (Camp Coordinator)
   const mgrUid = await getOrCreateUser("manager@example.com", password, "Camp Coordinator");
-  await db.ref(`users/${mgrUid}`).set({
+  await setBoth(`users/${mgrUid}`, {
     email: "manager@example.com",
     name: "Suresh (Camp Coordinator)",
     role: "Manager",
@@ -115,7 +127,7 @@ async function seed() {
 
   // 5. Donor User
   const donorUid = await getOrCreateUser("donor@example.com", password, "Volunteer Donor");
-  await db.ref(`users/${donorUid}`).set({
+  await setBoth(`users/${donorUid}`, {
     email: "donor@example.com",
     name: "Priya (Volunteer Donor)",
     role: "Donor",

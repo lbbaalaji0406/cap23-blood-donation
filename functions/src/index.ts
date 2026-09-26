@@ -2,7 +2,13 @@ import * as functions from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { defineSecret } from 'firebase-functions/params';
 
-admin.initializeApp();
+const databaseURL = process.env.FIREBASE_DATABASE_EMULATOR_HOST
+  ? `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}/?ns=cap23-blood-donation-default-rtdb`
+  : (process.env.FIREBASE_DATABASE_URL || 'https://cap23-blood-donation-default-rtdb.asia-southeast1.firebasedatabase.app');
+
+admin.initializeApp({
+  databaseURL
+});
 
 // Utilities
 export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[] => {
