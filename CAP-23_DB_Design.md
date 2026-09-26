@@ -10,8 +10,9 @@
 ```
 /users/
   {uid}/ {
-    email, name, role,           // role: Admin | Manager | User
-    campId,                      // REQUIRED for Manager role only; unset for Admin/User (D-002)
+    email, name, role,           // role: Admin | Manager | User | Hospital
+    campId,                      // REQUIRED for Manager role only; unset for Admin/User/Hospital (D-002)
+    hospitalId,                  // REQUIRED for Hospital role only; references masters/hospital/{id} (ID-014)
     createdAt
   }
 
@@ -19,6 +20,7 @@
   Admin/ { perms: [...] }
   Manager/ { perms: [...] }
   User/ { perms: [...] }
+  Hospital/ { perms: [...] }
 
 /masters/
   blood_group/
@@ -35,7 +37,7 @@
   donation_request/
     {campId}/
       {requestId}/ {
-        recipientName, recipientHospitalId,       // recipient is DATA only, not an actor
+        recipientName, recipientHospitalId,       // references masters/hospital/{id}; populated automatically by Hospital actor or Coordinator
         blood_groupId,
         componentType,       // 'WholeBlood' | 'Platelets' | 'Plasma' (defaults to 'WholeBlood')
         status,              // Registered | Verified | Pending Response | Matched | Partially Matched | Donated | Closed | Unfulfilled
@@ -45,6 +47,14 @@
         needsAdminAttention, // boolean flag for urgency (Phase 5a)
         assignedTo, createdBy, createdAt, updatedAt
       }
+
+/hospital_requests/                              // ID-014 Dual-Index for Hospital Tenant Isolation
+  {hospitalId}/
+    {requestId}/ {
+      campId, requestId, recipientHospitalId, recipientName,
+      blood_groupId, componentType, unitsNeeded, unitsSecured,
+      urgency, status, notes, patientId, createdAt, updatedAt
+    }
 
 /matches/                                        // Phase 5a Multi-Donor
   {requestId}/

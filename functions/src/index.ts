@@ -418,7 +418,9 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
   const db = admin.database();
   try {
     const rootUpdates: any = {};
-    
+    const reqSnap = await db.ref(`transactions/donation_request/${campId}/${requestId}`).once('value');
+    const reqData = reqSnap.val() || {};
+    const recipientHospitalId = reqData.recipientHospitalId;
 
     if (newStatus === 'Donated' || newStatus === 'Closed' || newStatus === 'Unfulfilled') {
       rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newStatus;
@@ -434,8 +436,6 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
       }
       
       if (donorUid && newStatus === 'Donated') {
-        const reqSnap = await db.ref(`transactions/donation_request/${campId}/${requestId}`).once('value');
-        const reqData = reqSnap.val() || {};
         const compType: BloodComponentType = reqData.componentType || 'WholeBlood';
 
         rootUpdates[`donor_history/${donorUid}/${requestId}`] = {
@@ -467,6 +467,11 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
     } else {
       rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newStatus;
       rootUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+    }
+
+    if (recipientHospitalId) {
+      rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/status`] = newStatus;
+      rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
     }
     
     await db.ref().update(rootUpdates);
@@ -710,6 +715,14 @@ async function handleRespondToMatch(campId: string, requestId: string, donorUid:
     }
     await requestRef.update({ status: newReqStatus });
 
+    if (requestDetails.recipientHospitalId) {
+      await db.ref(`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}`).update({
+        status: newReqStatus,
+        unitsSecured: updatedUnitsSecured,
+        updatedAt: { '.sv': 'timestamp' }
+      });
+    }
+
     await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', `Accepted (${newReqStatus})`);
     return { success: true };
   } else if (response === 'decline') {
@@ -783,7 +796,7 @@ export const createUserByAdmin = functions.https.onCall({ secrets: [emailjsServi
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
   }
 
-  const { email, name, role, campId, bloodGroup } = data;
+  const { email, name, role, campId, bloodGroup, hospitalId } = data;
 
   if (!email || !name || !role) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing required user parameters.');
@@ -808,6 +821,19 @@ export const createUserByAdmin = functions.https.onCall({ secrets: [emailjsServi
     throw new functions.https.HttpsError('permission-denied', 'Insufficient permissions to create users.');
   }
 
+  if (role === 'Hospital') {
+    if (callerProfile.role !== 'Admin') {
+      throw new functions.https.HttpsError('permission-denied', 'Only Admins can provision Hospital users.');
+    }
+    if (!hospitalId) {
+      throw new functions.https.HttpsError('invalid-argument', 'hospitalId is required when creating a Hospital user.');
+    }
+    const hospSnap = await admin.database().ref(`masters/hospital/${hospitalId}`).get();
+    if (!hospSnap.exists()) {
+      throw new functions.https.HttpsError('not-found', `Hospital '${hospitalId}' does not exist in master records.`);
+    }
+  }
+
   try {
     // 1. Create the Firebase Auth user
     const userRecord = await admin.auth().createUser({
@@ -830,6 +856,9 @@ export const createUserByAdmin = functions.https.onCall({ secrets: [emailjsServi
     };
     if (campId) {
       userPayload.campId = campId;
+    }
+    if (role === 'Hospital' && hospitalId) {
+      userPayload.hospitalId = hospitalId;
     }
 
     await admin.database().ref(`users/${userRecord.uid}`).set(userPayload);
@@ -891,3 +920,203 @@ export const requestSelfSignupVerification = functions.https.onCall({ secrets: [
     throw new functions.https.HttpsError('internal', 'Failed to process self-signup verification.');
   }
 });
+
+// Phase 6: Hospital Requisition System (ID-014)
+export const submitHospitalRequisition = functions.https.onCall(async (request) => {
+  const data = request.data;
+  const auth = request.auth;
+
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const db = admin.database();
+
+  // 1. Verify caller profile and role
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  if (!userSnap.exists()) {
+    throw new functions.https.HttpsError('permission-denied', 'User profile not found.');
+  }
+  const callerProfile = userSnap.val();
+  if (callerProfile.role !== 'Hospital' && callerProfile.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Hospital staff or Admins can submit blood requisitions.');
+  }
+
+  const hospitalId = callerProfile.role === 'Hospital' ? callerProfile.hospitalId : (data.hospitalId || callerProfile.hospitalId);
+  if (!hospitalId) {
+    throw new functions.https.HttpsError('invalid-argument', 'No hospitalId linked to this account.');
+  }
+
+  const {
+    recipientName,
+    blood_groupId,
+    componentType,
+    unitsNeeded,
+    urgency,
+    campId,
+    notes,
+    patientId
+  } = data;
+
+  if (!recipientName || !blood_groupId || !campId || !unitsNeeded) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing required requisition fields (recipientName, blood_groupId, campId, unitsNeeded).');
+  }
+
+  const units = parseInt(unitsNeeded, 10);
+  if (isNaN(units) || units < 1 || units > 20) {
+    throw new functions.https.HttpsError('invalid-argument', 'unitsNeeded must be a valid integer between 1 and 20.');
+  }
+
+  const validComponents: BloodComponentType[] = ['WholeBlood', 'Platelets', 'Plasma'];
+  const comp: BloodComponentType = validComponents.includes(componentType) ? componentType : 'WholeBlood';
+
+  const validUrgencies = ['Routine', 'Urgent', 'Critical'];
+  const reqUrgency = validUrgencies.includes(urgency) ? urgency : 'Routine';
+
+  // Validate target camp exists
+  const campSnap = await db.ref(`masters/camp/${campId}`).get();
+  if (!campSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', `Target Camp '${campId}' does not exist.`);
+  }
+
+  // Validate blood group exists
+  const bgSnap = await db.ref(`masters/blood_group/${blood_groupId}`).get();
+  if (!bgSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', `Blood Group '${blood_groupId}' does not exist.`);
+  }
+
+  // Generate push ID under camp
+  const newReqRef = db.ref(`transactions/donation_request/${campId}`).push();
+  const requestId = newReqRef.key as string;
+
+  const requestPayload: any = {
+    requestId,
+    campId,
+    recipientName,
+    recipientHospitalId: hospitalId,
+    blood_groupId,
+    componentType: comp,
+    unitsNeeded: units,
+    unitsSecured: 0,
+    urgency: reqUrgency,
+    status: 'Registered',
+    notes: notes || '',
+    patientId: patientId || '',
+    createdBy: auth.uid,
+    createdByName: callerProfile.name || 'Hospital Staff',
+    createdAt: { '.sv': 'timestamp' },
+    updatedAt: { '.sv': 'timestamp' }
+  };
+
+  const hospitalRequestPayload: any = {
+    requestId,
+    campId,
+    recipientName,
+    recipientHospitalId: hospitalId,
+    blood_groupId,
+    componentType: comp,
+    unitsNeeded: units,
+    unitsSecured: 0,
+    urgency: reqUrgency,
+    status: 'Registered',
+    notes: notes || '',
+    patientId: patientId || '',
+    createdAt: { '.sv': 'timestamp' },
+    updatedAt: { '.sv': 'timestamp' }
+  };
+
+  const updates: Record<string, any> = {};
+  updates[`transactions/donation_request/${campId}/${requestId}`] = requestPayload;
+  updates[`hospital_requests/${hospitalId}/${requestId}`] = hospitalRequestPayload;
+
+  await db.ref().update(updates);
+
+  await logAudit(
+    requestId,
+    auth.uid,
+    callerProfile.name || 'Hospital Staff',
+    'CREATE_REQUEST',
+    'Success',
+    null,
+    undefined,
+    `Hospital requisition created for ${recipientName} (${units} units ${comp} ${blood_groupId})`
+  );
+
+  return { success: true, requestId, campId };
+});
+
+export const cancelHospitalRequisition = functions.https.onCall(async (request) => {
+  const data = request.data;
+  const auth = request.auth;
+
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const { campId, requestId, reason } = data;
+  if (!campId || !requestId) {
+    throw new functions.https.HttpsError('invalid-argument', 'campId and requestId are required.');
+  }
+
+  const db = admin.database();
+
+  // Verify caller profile
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  if (!userSnap.exists()) {
+    throw new functions.https.HttpsError('permission-denied', 'User profile not found.');
+  }
+  const callerProfile = userSnap.val();
+
+  // Fetch the request
+  const reqRef = db.ref(`transactions/donation_request/${campId}/${requestId}`);
+  const reqSnap = await reqRef.get();
+  if (!reqSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'Donation request not found.');
+  }
+
+  const reqData = reqSnap.val();
+
+  // Check hospital ownership unless Admin
+  if (callerProfile.role !== 'Admin') {
+    if (callerProfile.role !== 'Hospital' || callerProfile.hospitalId !== reqData.recipientHospitalId) {
+      throw new functions.https.HttpsError('permission-denied', 'You do not have permission to cancel this requisition.');
+    }
+  }
+
+  // Safety check: ONLY allow cancellation if in 'Registered' state!
+  if (reqData.status !== 'Registered') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `Cannot cancel requisition in '${reqData.status}' state directly. Please contact the camp coordinator.`
+    );
+  }
+
+  const cancelReason = reason || 'Cancelled by Hospital';
+
+  const updates: Record<string, any> = {};
+  updates[`transactions/donation_request/${campId}/${requestId}/status`] = 'Closed';
+  updates[`transactions/donation_request/${campId}/${requestId}/cancellationReason`] = cancelReason;
+  updates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+
+  if (reqData.recipientHospitalId) {
+    updates[`hospital_requests/${reqData.recipientHospitalId}/${requestId}/status`] = 'Closed';
+    updates[`hospital_requests/${reqData.recipientHospitalId}/${requestId}/cancellationReason`] = cancelReason;
+    updates[`hospital_requests/${reqData.recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+  }
+
+  await db.ref().update(updates);
+
+  await logAudit(
+    requestId,
+    auth.uid,
+    callerProfile.name || 'Hospital Staff',
+    'UPDATE_STATUS',
+    'Success',
+    null,
+    'Registered',
+    `Closed (Cancelled by Hospital: ${cancelReason})`
+  );
+
+  return { success: true };
+});
+

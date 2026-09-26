@@ -13,6 +13,7 @@ import { DonorHistoryView } from './components/Users/DonorHistoryView';
 
 import { RolesScreen } from './components/Administration/RolesScreen';
 import { SettingsScreen } from './components/Administration/SettingsScreen';
+import { HospitalRequisitionForm } from './components/Hospital/HospitalRequisitionForm';
 
 
 
@@ -45,6 +46,7 @@ const App = () => {
               <Route path="reports" element={<RoleRoute allowedRoles={['Admin', 'Manager']}><ReportsDashboard /></RoleRoute>} />
               <Route path="/roles" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><RolesScreen /></div></RoleRoute>} />
               <Route path="/settings" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><SettingsScreen /></div></RoleRoute>} />
+              <Route path="/hospital/new" element={<RoleRoute allowedRoles={['Hospital', 'Admin']}><HospitalRequisitionForm /></RoleRoute>} />
               
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>

@@ -4,13 +4,14 @@ import type { User } from 'firebase/auth';
 import { ref, onValue } from 'firebase/database';
 import { auth, db } from '../firebase';
 
-export type Role = 'Admin' | 'Manager' | 'Donor';
+export type Role = 'Admin' | 'Manager' | 'Donor' | 'Hospital' | 'User';
 
 export interface UserProfile {
   email: string;
   name: string;
   role: Role;
   campId?: string;
+  hospitalId?: string;
   bloodGroup?: string;
   bloodGroupVerified?: boolean;
   createdAt: string;

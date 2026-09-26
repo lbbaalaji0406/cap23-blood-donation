@@ -9,7 +9,8 @@ import {
   Users, 
   Settings, 
   LogOut, 
-  Menu
+  Menu,
+  Droplet
 } from 'lucide-react';
 import { useState } from 'react';
 import clsx from 'clsx';
@@ -24,7 +25,8 @@ export const AppShell = () => {
   };
 
   const navItems = [
-    { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Admin', 'Manager', 'User'] },
+    { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Admin', 'Manager', 'User', 'Hospital'] },
+    { label: 'New Requisition', path: '/hospital/new', icon: Droplet, roles: ['Hospital'] },
     { label: 'Masters', path: '/masters', icon: Database, roles: ['Admin', 'Manager'] },
     { label: 'Donation Requests', path: '/requests', icon: Activity, roles: ['Admin', 'Manager'] },
     { label: 'Reports', path: '/reports', icon: FileText, roles: ['Admin', 'Manager'] },
@@ -62,6 +64,7 @@ export const AppShell = () => {
           <div className="text-xs text-slate-400 mt-1 flex items-center gap-2">
             <span className="px-2 py-0.5 bg-slate-800 rounded-full text-primary">{profile?.role}</span>
             {profile?.campId && <span className="truncate" title={profile.campId}>Camp: {profile.campId}</span>}
+            {profile?.hospitalId && <span className="truncate" title={profile.hospitalId}>Hosp: {profile.hospitalId}</span>}
           </div>
         </div>
 

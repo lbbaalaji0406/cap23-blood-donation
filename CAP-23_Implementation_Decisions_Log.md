@@ -167,3 +167,29 @@ Numbered `ID-001`, `ID-002`, etc. — sequential, not tied to any particular day
    - Evaluated server-side in `handleMatchDonor` and candidate filter `findNextEligibleDonor`.
    - UI surfaces component badges, countdowns per component, and a platelet quota bar in `DonorHistoryView.tsx`.
 
+---
+
+## ID-014: Hospital as a Real Actor, Requisition Dual-Indexing, and Cross-Tenant Privacy Preservation
+
+**Requirement:** Hospitals were previously passive data records (`recipientHospitalId`). Clinicians had to phone or relay blood requisitions through Camp Coordinators or Admins, causing treatment delays in life-threatening emergencies and giving medical staff zero real-time visibility into fulfillment progress.
+
+**The Architectural Challenge:**
+Under Deviation **D-005**, all donation requests are strictly nested under `/transactions/donation_request/{campId}/{requestId}` to enforce native Manager read-isolation. Because Firebase RTDB rules cannot filter root-level list queries without granting blanket read permissions, a Hospital actor belonging to a `hospitalId` (not a single `campId`) cannot perform a query across multiple camps without breaking D-005.
+
+**Decision:**
+1. **First-Class Hospital Actor:**
+   - Added `role: 'Hospital'` and `hospitalId: string` to the `/users/{uid}` schema.
+   - Provisioned securely by Admins via `createUserByAdmin`, verifying that `hospitalId` matches a valid record in `masters/hospital`.
+2. **Dual-Index Requisition Engine:**
+   - Requisitions submitted by hospitals via `submitHospitalRequisition` Cloud Function perform an atomic multi-path write:
+     - Primary camp queue: `/transactions/donation_request/{campId}/{requestId}` (preserving Coordinator workflow and D-005).
+     - Hospital-isolated tracking index: `/hospital_requests/{hospitalId}/{requestId}`.
+   - RTDB security rule on `/hospital_requests/{hospitalId}` guarantees 100% path-isolated read access: only Admins and users with `auth.token.hospitalId == $hospitalId` can read.
+   - RTDB security rule sets `.write: false` on `/hospital_requests`, preventing client-side spoofing.
+3. **Real-Time State Synchronization:**
+   - Whenever a Coordinator advances a request state (`Verified`, `Partially Matched`, `Matched`, `Donated`, `Closed`, `Unfulfilled`) or donors accept/donate in `processWorkflowState`, the Cloud Function synchronizes `status`, `unitsSecured`, and timestamps atomically to `/hospital_requests/{hospitalId}/{requestId}`.
+4. **Strict Donor PII Isolation:**
+   - Hospital staff can view live fulfillment metrics (`unitsSecured: X / Y`, state, camp contact name and desk phone), but **zero donor personal identifying information** (donor name, phone number, address) is ever exposed in `/hospital_requests` or to hospital users.
+5. **Safe Cancellation Lifecycle:**
+   - Hospital staff can self-cancel a requisition via `cancelHospitalRequisition` only while the requisition remains in `Registered` status. Once `Verified` or `Matched`, cancellations must be coordinated with the camp desk to prevent disruption of active donors traveling for phlebotomy.
+

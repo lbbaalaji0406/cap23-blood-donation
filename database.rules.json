@@ -29,10 +29,18 @@
           ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId)",
           ".indexOn": ["createdAt"],
           "$requestId": {
-            ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() != 'Donor' || root.child('matches/' + $requestId + '/' + auth.uid).exists())",
+            ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId || (root.child('users').child(auth.uid).child('role').val() == 'Hospital' && root.child('users').child(auth.uid).child('hospitalId').val() == data.child('recipientHospitalId').val()) || (root.child('users').child(auth.uid).child('role').val() != 'Donor' && root.child('users').child(auth.uid).child('role').val() != 'Hospital') || root.child('matches/' + $requestId + '/' + auth.uid).exists())",
             ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId)) && newData.child('recipientName').exists() && newData.child('blood_groupId').exists() && ((!data.exists() && newData.child('status').val() == 'Registered') || data.exists())"
           }
         }
+      }
+    },
+
+    "hospital_requests": {
+      "$hospitalId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Hospital' && root.child('users').child(auth.uid).child('hospitalId').val() == $hospitalId))",
+        ".write": "false",
+        ".indexOn": ["createdAt", "status"]
       }
     },
 

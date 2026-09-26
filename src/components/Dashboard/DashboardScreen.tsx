@@ -7,6 +7,7 @@ import { DonorHistoryView } from '../Users/DonorHistoryView';
 import { ref, onValue } from 'firebase/database';
 import { db } from '../../firebase';
 import { Link } from 'react-router-dom';
+import { HospitalDashboard } from '../Hospital/HospitalDashboard';
 
 export const DashboardScreen = () => {
   const { profile, user } = useAuth();
@@ -49,6 +50,10 @@ export const DashboardScreen = () => {
       return () => unsubscribe();
     }
   }, [profile, user]);
+
+  if (profile?.role === 'Hospital') {
+    return <HospitalDashboard />;
+  }
 
   if (profile?.role === 'Donor') {
     return (

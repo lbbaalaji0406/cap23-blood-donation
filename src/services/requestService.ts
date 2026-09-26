@@ -2,7 +2,7 @@ import { ref, get, set, update, push, serverTimestamp, query, orderByChild } fro
 import { db as database } from '../firebase';
 
 export type UrgencyLevel = 'Routine' | 'Urgent' | 'Critical';
-export type RequestStatus = 'Registered' | 'Verified' | 'Matched' | 'Donated' | 'Closed' | 'Unfulfilled';
+export type RequestStatus = 'Registered' | 'Verified' | 'Pending Response' | 'Partially Matched' | 'Matched' | 'Donated' | 'Closed' | 'Unfulfilled';
 
 export interface DonationRequest {
   id: string;
@@ -12,8 +12,12 @@ export interface DonationRequest {
   blood_groupId: string;
   componentType?: 'WholeBlood' | 'Platelets' | 'Plasma';
   unitsNeeded: number;
+  unitsSecured?: number;
   urgency: UrgencyLevel;
   status: RequestStatus;
+  notes?: string;
+  patientId?: string;
+  cancellationReason?: string;
   
   unfulfillableFlag?: boolean;
   matchedDonorId?: string;
@@ -26,7 +30,21 @@ export interface DonationRequest {
 
 export const requestService = {
   // Fetch all requests
-  getAllRequests: async (role?: string, campId?: string): Promise<DonationRequest[]> => {
+  getAllRequests: async (role?: string, campId?: string, hospitalId?: string): Promise<DonationRequest[]> => {
+    if (role === 'Hospital' && hospitalId) {
+      const hospitalRequestsRef = ref(database, `hospital_requests/${hospitalId}`);
+      const q = query(hospitalRequestsRef, orderByChild('createdAt'));
+      const snapshot = await get(q);
+      
+      const results: DonationRequest[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach((child) => {
+          results.push({ id: child.key, ...child.val() } as DonationRequest);
+        });
+      }
+      return results.reverse();
+    }
+
     if (role === 'Manager' && campId) {
       // Direct natively allowed read of the camp's subtree
       const campRequestsRef = ref(database, `transactions/donation_request/${campId}`);

@@ -3,7 +3,7 @@ import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
 import { updateUserRoleAndCamp } from '../../services/userService';
 import type { Role } from '../../contexts/AuthProvider';
-import type { Camp } from '../../services/masterService';
+import type { Camp, Hospital } from '../../services/masterService';
 import { Shield, Edit2, X, Plus } from 'lucide-react';
 import { orderByChild, equalTo } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
@@ -15,6 +15,7 @@ interface UserProfile {
   name: string;
   role: Role;
   campId?: string;
+  hospitalId?: string;
   createdAt: string;
 }
 
@@ -60,16 +61,19 @@ export const UsersScreen = () => {
 
   const { data: usersData, loading: usersLoading, error: usersError } = useRTDB<Record<string, Omit<UserProfile, 'uid'>>>('users', queryConstraints as any);
   const { data: campsData } = useRTDB<Record<string, Camp>>('masters/camp');
+  const { data: hospitalsData } = useRTDB<Record<string, Hospital>>('masters/hospital');
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role>('Donor' as Role);
   const [selectedCampId, setSelectedCampId] = useState<string>('');
+  const [selectedHospitalId, setSelectedHospitalId] = useState<string>('');
   
   const [isAddingUser, setIsAddingUser] = useState(false);
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addRole, setAddRole] = useState<Role>('Donor' as Role);
   const [addCampId, setAddCampId] = useState<string>('');
+  const [addHospitalId, setAddHospitalId] = useState<string>('');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,11 +86,13 @@ export const UsersScreen = () => {
   users.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const camps = campsData ? Object.entries(campsData).map(([id, val]) => ({ id, ...val })) : [];
+  const hospitals = hospitalsData ? Object.entries(hospitalsData).map(([id, val]) => ({ id, ...val })) : [];
 
   const handleEditClick = (user: UserProfile) => {
     setEditingUser(user);
     setSelectedRole(user.role || 'Donor');
     setSelectedCampId(user.campId || '');
+    setSelectedHospitalId(user.hospitalId || '');
     setError(null);
   };
 
@@ -97,11 +103,20 @@ export const UsersScreen = () => {
       setError('A Camp must be selected for Managers.');
       return;
     }
+    if (selectedRole === 'Hospital' && !selectedHospitalId) {
+      setError('A Hospital must be selected for Hospital users.');
+      return;
+    }
 
     setSaving(true);
     setError(null);
     try {
-      await updateUserRoleAndCamp(editingUser.uid, selectedRole, selectedRole === 'Manager' ? selectedCampId : undefined);
+      await updateUserRoleAndCamp(
+        editingUser.uid,
+        selectedRole,
+        selectedRole === 'Manager' ? selectedCampId : undefined,
+        selectedRole === 'Hospital' ? selectedHospitalId : undefined
+      );
       setEditingUser(null);
     } catch (err: any) {
       setError(err.message);
@@ -116,6 +131,10 @@ export const UsersScreen = () => {
       setError('A Camp must be selected for Managers.');
       return;
     }
+    if (addRole === 'Hospital' && !addHospitalId) {
+      setError('A Hospital must be selected for Hospital users.');
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -126,13 +145,15 @@ export const UsersScreen = () => {
         name: addName,
         email: addEmail,
         role: addRole,
-        campId: (addRole === 'Manager' || addRole === 'Donor') ? targetCampId : undefined
+        campId: (addRole === 'Manager' || addRole === 'Donor') ? targetCampId : undefined,
+        hospitalId: addRole === 'Hospital' ? addHospitalId : undefined
       });
       setIsAddingUser(false);
       setAddName('');
       setAddEmail('');
       setAddRole('Donor' as Role);
       setAddCampId('');
+      setAddHospitalId('');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -192,6 +213,7 @@ export const UsersScreen = () => {
                     <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium ${
                       user.role === 'Admin' ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' :
                       user.role === 'Manager' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                      user.role === 'Hospital' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' :
                       'bg-slate-100 text-slate-700 dark:text-slate-300 dark:bg-slate-800 dark:text-slate-300'
                     }`}>
                       <Shield size={14} /> {user.role}
@@ -203,6 +225,8 @@ export const UsersScreen = () => {
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                     {user.role === 'Manager' ? (
                       user.campId ? <span className="font-medium">{user.campId}</span> : <span className="text-red-500">Unassigned</span>
+                    ) : user.role === 'Hospital' ? (
+                      user.hospitalId ? <span className="font-medium text-teal-700 dark:text-teal-400">Hosp: {user.hospitalId}</span> : <span className="text-red-500">Unassigned</span>
                     ) : (
                       <span className="text-slate-400">N/A</span>
                     )}
@@ -260,6 +284,7 @@ export const UsersScreen = () => {
                 >
                   <option value="Donor">Donor</option>
                   <option value="Manager">Manager</option>
+                  <option value="Hospital">Hospital</option>
                   <option value="Admin">Admin</option>
                 </select>
               </div>
@@ -276,6 +301,23 @@ export const UsersScreen = () => {
                     <option value="">-- Select a Camp --</option>
                     {camps.map(camp => (
                       <option key={camp.id} value={camp.id}>{camp.name} ({camp.code})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {selectedRole === 'Hospital' && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Affiliated Hospital</label>
+                  <select
+                    required
+                    value={selectedHospitalId}
+                    onChange={(e) => setSelectedHospitalId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  >
+                    <option value="">-- Select a Hospital --</option>
+                    {hospitals.map(hosp => (
+                      <option key={hosp.id} value={hosp.id}>{hosp.name} ({hosp.code})</option>
                     ))}
                   </select>
                 </div>
@@ -357,6 +399,7 @@ export const UsersScreen = () => {
                   >
                     <option value="Donor">Donor</option>
                     <option value="Manager">Manager</option>
+                    <option value="Hospital">Hospital</option>
                     <option value="Admin">Admin</option>
                   </select>
                 </div>
@@ -374,6 +417,23 @@ export const UsersScreen = () => {
                     <option value="">-- Select a Camp --</option>
                     {camps.map(camp => (
                       <option key={camp.id} value={camp.id}>{camp.name} ({camp.code})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {isAdmin && addRole === 'Hospital' && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Affiliated Hospital</label>
+                  <select
+                    required
+                    value={addHospitalId}
+                    onChange={(e) => setAddHospitalId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  >
+                    <option value="">-- Select a Hospital --</option>
+                    {hospitals.map(hosp => (
+                      <option key={hosp.id} value={hosp.id}>{hosp.name} ({hosp.code})</option>
                     ))}
                   </select>
                 </div>
