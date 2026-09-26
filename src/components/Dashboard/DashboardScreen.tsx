@@ -36,8 +36,8 @@ export const DashboardScreen = () => {
     };
     fetchDashboardRequests();
 
-    // ID-012: Fetch active donor match for User role
-    if (profile?.role === 'User' && user?.uid) {
+    // ID-012: Fetch active donor match for Donor role
+    if (profile?.role === 'Donor' && user?.uid) {
       const matchRef = ref(db, `active_donor_matches/${user.uid}`);
       const unsubscribe = onValue(matchRef, (snapshot) => {
         if (snapshot.exists()) {
@@ -50,7 +50,7 @@ export const DashboardScreen = () => {
     }
   }, [profile, user]);
 
-  if (profile?.role === 'User') {
+  if (profile?.role === 'Donor') {
     return (
       <div className="flex flex-col h-full gap-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -66,6 +66,24 @@ export const DashboardScreen = () => {
           </div>
         </div>
         
+        {!profile.bloodGroup && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">ΓÜá∩╕Å</span>
+              <div>
+                <h3 className="font-bold text-amber-900">Missing Blood Group</h3>
+                <p className="text-sm text-amber-800">Please update your profile with your blood group to receive accurate donation matches.</p>
+              </div>
+            </div>
+            <Link 
+              to="/profile"
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+            >
+              Update Profile
+            </Link>
+          </div>
+        )}
+
         {activeMatch && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">

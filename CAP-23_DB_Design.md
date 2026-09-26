@@ -37,11 +37,25 @@
       recipientName, recipientHospitalId,       // recipient is DATA only, not an actor
       blood_groupId,
       campId,                                    // FK — used for D-002 scoping check
-      status,             // Registered | Verified | Matched | Donated | Closed | Unfulfilled
+      status,             // Registered | Verified | Pending Response | Matched | Partially Matched | Donated | Closed | Unfulfilled
       unfulfillableFlag,   // set by Manager, actual status transition requires Admin (D-001)
-      matchedDonorId,      // set only during Matched; must be unique-checked via runTransaction
+      unitsNeeded,         // integer
+      unitsSecured,        // integer (Phase 5a)
+      needsAdminAttention, // boolean flag for urgency (Phase 5a)
       assignedTo, createdBy, createdAt, updatedAt
     }
+
+/matches/                                        // Phase 5a Multi-Donor
+  {requestId}/
+    {donorId}/ {
+      status,              // 'pending_response' | 'accepted' | 'declined'
+      matchedAt, respondedAt
+    }
+
+/active_donor_matches/                           // Locks (D-008/Phase 5a)
+  {donorUid}/ {
+    requestId, campId
+  }
 
 /donor_history/                                  // Trainer Extension
   {donorUid}/

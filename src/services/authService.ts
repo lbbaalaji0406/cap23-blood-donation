@@ -5,6 +5,7 @@ import {
 } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { ref, set } from 'firebase/database';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth, db } from '../firebase';
 
 export const login = async (email: string, pass: string) => {
@@ -25,16 +26,18 @@ export const login = async (email: string, pass: string) => {
   }
 };
 
-export const signupUser = async (email: string, pass: string, name: string) => {
+export const signupUser = async (email: string, pass: string, name: string, bloodGroup: string) => {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
     const user = userCredential.user;
 
-    // Hardcode role to User (Donor)
+    // Hardcode role to Donor
     const userProfile = {
       email,
       name,
-      role: 'User',
+      role: 'Donor',
+      bloodGroup,
+      bloodGroupVerified: false,
       createdAt: new Date().toISOString()
     };
 
@@ -46,12 +49,21 @@ export const signupUser = async (email: string, pass: string, name: string) => {
       return { user, error: 'Account created, but profile setup failed. Please contact support.' };
     }
 
+    try {
+      const functions = getFunctions(auth.app);
+      const requestSelfSignupVerification = httpsCallable(functions, 'requestSelfSignupVerification');
+      await requestSelfSignupVerification();
+    } catch (emailError) {
+      console.error("Failed to request verification email:", emailError);
+      // We don't rollback signup if the email fails, but we can log it.
+    }
+
     return { user, error: null };
   } catch (error) {
     if (error instanceof FirebaseError) {
       let message = 'An error occurred during signup.';
       if (error.code === 'auth/email-already-in-use') {
-        message = 'This email is already registered. Please log in instead.';
+        message = 'An account with this email already exists. Check your inbox for an activation link, or log in.';
       } else if (error.code === 'auth/weak-password') {
         message = 'Password is too weak. Please use at least 6 characters.';
       } else if (error.code === 'auth/network-request-failed') {

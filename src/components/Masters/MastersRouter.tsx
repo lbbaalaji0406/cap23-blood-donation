@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { BloodGroupList } from './BloodGroupList';
-import { BloodGroupForm } from './BloodGroupForm';
+
 import { CampList } from './CampList';
 import { CampForm } from './CampForm';
 import { HospitalList } from './HospitalList';
@@ -40,8 +40,6 @@ export const MastersRouter = () => {
       <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <Routes>
           <Route path="blood-group" element={<BloodGroupList />} />
-          <Route path="blood-group/new" element={<BloodGroupForm />} />
-          <Route path="blood-group/:id" element={<BloodGroupForm />} />
           
           <Route path="camp" element={<CampList />} />
           <Route path="camp/new" element={<CampForm />} />

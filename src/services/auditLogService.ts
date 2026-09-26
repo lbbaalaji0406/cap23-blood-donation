@@ -1,4 +1,4 @@
-import { ref, push, serverTimestamp, get, query, orderByChild, equalTo } from 'firebase/database';
+import { ref, push, get, serverTimestamp } from 'firebase/database';
 import { db as database } from '../firebase';
 
 export interface AuditLog {

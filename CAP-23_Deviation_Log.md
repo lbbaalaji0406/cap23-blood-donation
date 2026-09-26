@@ -259,3 +259,30 @@ The modern Firebase JS SDK (v9+) proactively rejects client-side queries that us
 **Approved by:** OrchestrAI Lead
 **Recorded by:** Antigravity (AI Co-Engineer)
 **Date:** 2026-07-16
+
+---
+
+## Deviation D-009: Transition to Multi-Donor Fulfillment Architecture (Phase 5a)
+
+**Status:** ✅ Approved by Lead — 2026-08-12
+
+**What deviates:**
+The original design defined a strict 1-to-1 relationship between a Donation Request and a Donor, enforced via a single `matchedDonorId` field on the request. This build transitions to a 1-to-Many Multi-Donor Fulfillment model, allowing multiple donors to fulfill fractions of the required units.
+
+**Why:**
+Real-world donation requirements (e.g., 3 units of blood) often require multiple donors. A 1-to-1 strict constraint forced unnatural workarounds. 
+
+**Scope of the change:**
+- **Data Model:** Deleted `matchedDonorId` from `donation_request`. Added `unitsSecured` (integer) and `needsAdminAttention` (boolean). Added a new `/matches/{requestId}/{donorUid}` root node to store donor responses.
+- **Workflow:** Donors now have agency. Upon match, the state is `Pending Response`. Donors can accept (incrementing `unitsSecured`) or decline (triggering auto-rematch).
+- **Rules:** Read permissions for Requests, Comments, and Attachments now evaluate against the `/matches/{requestId}/{donorUid}` node instead of the defunct `matchedDonorId`.
+
+**Impact on governance documents:**
+| Document | Section | Required edit |
+|---|---|---|
+| DB Design | RTDB Tree | Remove `matchedDonorId`, add `unitsSecured`, add `/matches/{requestId}/{donorId}` node. |
+| DB Design | Security Rules | Update `.read` logic to rely on the new `/matches` sub-collection. |
+
+**Approved by:** OrchestrAI Lead
+**Recorded by:** Antigravity (AI Co-Engineer)
+**Date:** 2026-08-12

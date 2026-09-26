@@ -1,0 +1,57 @@
+{
+  "-OyOIxtZD0092o_qLunz": {
+    "eventType": "Donated",
+    "reason": "donor profile fetch failed",
+    "requestId": "FAKE_REQ_123",
+    "timestamp": 1784983576360,
+    "uid": "NON_EXISTENT_DONOR_999"
+  },
+  "-OyOIyLlhk9QXT-j9YpF": {
+    "eventType": "Matched",
+    "reason": "Missing API key. Pass it to the constructor `new Resend(\"re_123\")`",
+    "requestId": "FAKE_REQ_456",
+    "timestamp": 1784983578235,
+    "uid": "BAD_EMAIL_DONOR"
+  },
+  "-OyOJC4gnCBUOdOC-0x6": {
+    "eventType": "Donated",
+    "reason": "donor profile fetch failed",
+    "requestId": "FAKE_REQ_123",
+    "timestamp": 1784983638576,
+    "uid": "NON_EXISTENT_DONOR_999"
+  },
+  "-OyOJuHpn4XDnYDu0v93": {
+    "eventType": "Donated",
+    "reason": "donor profile fetch failed",
+    "requestId": "FAKE_REQ_123",
+    "timestamp": 1784983823551,
+    "uid": "NON_EXISTENT_DONOR_999"
+  },
+  "-OyOK6PXEZw6g78_SZcY": {
+    "eventType": "Donated",
+    "reason": "donor profile fetch failed",
+    "requestId": "FAKE_REQ_123",
+    "timestamp": 1784983877293,
+    "uid": "NON_EXISTENT_DONOR_999"
+  },
+  "-OyOLRXWhXPmcUWrXc7b": {
+    "eventType": "Matched",
+    "reason": "API access from non-browser environments is currently disabled.Enable this option in https://dashboard.emailjs.com/admin/account/security",
+    "requestId": "-OyOLCEfYBZsgA6yMHf-",
+    "timestamp": 1784984225981,
+    "uid": "v8w73Hjr7btDZKtmn7sjiRe0wxA1"
+  },
+  "-OyOdu6PNmlvOWZwH6zO": {
+    "email": "baalasri0407@gmail.com",
+    "reason": "API access from non-browser environments is currently disabled.Enable this option in https://dashboard.emailjs.com/admin/account/security",
+    "timestamp": 1784989327845,
+    "uid": "s5q3Kf9rRvkKtX9nv09X5pS5znGP"
+  },
+  "-OyOeHTzCgiei-o-CgN7": {
+    "eventType": "Matched",
+    "reason": "API access from non-browser environments is currently disabled.Enable this option in https://dashboard.emailjs.com/admin/account/security",
+    "requestId": "-OyOdZgkzIHmWaOPVepm",
+    "timestamp": 1784989427661,
+    "uid": "s5q3Kf9rRvkKtX9nv09X5pS5znGP"
+  }
+}

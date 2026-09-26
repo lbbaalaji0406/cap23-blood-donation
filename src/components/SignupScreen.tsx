@@ -1,18 +1,24 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { signupUser } from '../services/authService';
-
+import { useRTDB } from '../hooks/useRTDB';
+import type { BloodGroup } from '../services/masterService';
 export const SignupScreen = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [bloodGroup, setBloodGroup] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  const { data: bloodGroupsData, loading: bgLoading } = useRTDB<Record<string, BloodGroup>>('masters/blood_group');
+  const bloodGroups = bloodGroupsData ? Object.entries(bloodGroupsData).map(([id, val]) => ({ id, ...val })) : [];
+  bloodGroups.sort((a, b) => a.code.localeCompare(b.code));
+
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !bloodGroup) {
       setErrorMsg('Please fill out all fields.');
       return;
     }
@@ -22,7 +28,7 @@ export const SignupScreen = () => {
     setLoading(true);
     setErrorMsg('');
 
-    const { error } = await signupUser(email, password, name);
+    const { error } = await signupUser(email, password, name, bloodGroup);
     if (error) {
       setErrorMsg(error);
       setLoading(false);
@@ -72,6 +78,26 @@ export const SignupScreen = () => {
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1" htmlFor="bloodGroup">
+              Blood Group
+            </label>
+            <select
+              id="bloodGroup"
+              value={bloodGroup}
+              onChange={(e) => setBloodGroup(e.target.value)}
+              disabled={bgLoading}
+              className="w-full px-4 py-2 border border-slate-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all dark:bg-slate-800 dark:text-white"
+            >
+              <option value="" disabled>Select Blood Group</option>
+              {bloodGroups.map((bg) => (
+                <option key={bg.id} value={bg.id}>
+                  {bg.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>

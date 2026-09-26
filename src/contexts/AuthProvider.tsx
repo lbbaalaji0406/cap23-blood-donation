@@ -4,7 +4,7 @@ import type { User } from 'firebase/auth';
 import { ref, onValue } from 'firebase/database';
 import { auth, db } from '../firebase';
 
-export type Role = 'Admin' | 'Manager' | 'User';
+export type Role = 'Admin' | 'Manager' | 'Donor';
 
 export interface UserProfile {
   email: string;

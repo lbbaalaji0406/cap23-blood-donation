@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { requestService } from '../../services/requestService';
 import type { DonationRequest, RequestStatus } from '../../services/requestService';
-import { getCamps, getHospitals, getBloodGroups } from '../../services/masterService';
+import { getCamps, getHospitals, getBloodGroups, getCompatibleDonorGroups } from '../../services/masterService';
 import type { Camp, Hospital, BloodGroup } from '../../services/masterService';
 import { useAuth } from '../../contexts/AuthProvider';
 import { workflowService } from '../../services/workflowService';
+import { db } from '../../firebase';
+import { ref, get } from 'firebase/database';
 
 import { CommentsThread } from './CommentsThread';
 import { AttachmentsList } from './AttachmentsList';
@@ -35,6 +37,9 @@ export const RequestDetail = () => {
   
   const [showDonatedPrompt, setShowDonatedPrompt] = useState(false);
   const [donatedVolume, setDonatedVolume] = useState(1);
+  const [matchedDonorProfile, setMatchedDonorProfile] = useState<any>(null);
+  const [loadingDonor, setLoadingDonor] = useState(false);
+  const [confirmedBloodGroup, setConfirmedBloodGroup] = useState('');
 
   const fetchAll = async () => {
     try {
@@ -79,7 +84,24 @@ export const RequestDetail = () => {
     }
 
     if (newStatus === 'Donated' && request.status === 'Matched') {
-      setShowDonatedPrompt(true);
+      if (request.matchedDonorId) {
+        setLoadingDonor(true);
+        setShowDonatedPrompt(true);
+        try {
+          const snapshot = await get(ref(db, `users/${request.matchedDonorId}`));
+          if (snapshot.exists()) {
+            const data = snapshot.val();
+            setMatchedDonorProfile(data);
+            setConfirmedBloodGroup(data.bloodGroup || '');
+          }
+        } catch (err) {
+          console.error("Failed to fetch donor profile", err);
+        } finally {
+          setLoadingDonor(false);
+        }
+      } else {
+        setShowDonatedPrompt(true);
+      }
       return;
     }
 
@@ -113,10 +135,45 @@ export const RequestDetail = () => {
     }
   };
 
-  const handleMatchDonor = async () => {
+  const [matchWarning, setMatchWarning] = useState<string | null>(null);
+
+  const handleMatchDonor = async (overrideWarning = false) => {
     if (!request || !user || !profile || !campId || !donorUidToMatch.trim()) return;
+    
+    if (!overrideWarning) {
+      setUpdatingStatus(true);
+      setError('');
+      setMatchWarning(null);
+      try {
+        const donorSnap = await get(ref(db, `users/${donorUidToMatch.trim()}`));
+        if (!donorSnap.exists()) {
+          throw new Error('Donor profile not found.');
+        }
+        const donorData = donorSnap.val();
+        if (donorData.role !== 'Donor') {
+          throw new Error('User is not a Donor.');
+        }
+
+        const compatibleDonors = getCompatibleDonorGroups(request.blood_groupId);
+        if (!donorData.bloodGroup || !compatibleDonors.includes(donorData.bloodGroup)) {
+          throw new Error(`Donor's blood group (${bloodGroups[donorData.bloodGroup]?.name || 'Unknown'}) is physically INCOMPATIBLE with the recipient's required blood group (${bloodGroups[request.blood_groupId]?.name}).`);
+        }
+
+        if (!donorData.bloodGroupVerified) {
+          setMatchWarning("WARNING: This donor's blood type is unverified. Proceed only if they can verify on-site.");
+          setUpdatingStatus(false);
+          return; // Stop and wait for user to accept warning
+        }
+      } catch (err: any) {
+        setError(err.message || 'Validation failed.');
+        setUpdatingStatus(false);
+        return;
+      }
+    }
+
     setUpdatingStatus(true);
     setError('');
+    setMatchWarning(null);
     try {
       await workflowService.matchDonor(
         campId,
@@ -145,10 +202,9 @@ export const RequestDetail = () => {
         request.id,
         request.status,
         'Donated',
-        user.uid,
-        profile.name,
         request.matchedDonorId,
-        donatedVolume
+        donatedVolume,
+        confirmedBloodGroup
       );
       setShowDonatedPrompt(false);
       await fetchAll();
@@ -239,34 +295,58 @@ export const RequestDetail = () => {
 
       {/* Match Donor Prompt Modal/Inline */}
       {showMatchPrompt && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-lg font-bold text-indigo-900 mb-2">Match Donor</h3>
-          <p className="text-sm text-indigo-700 mb-4">
+        <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-6 shadow-sm mt-4">
+          <h3 className="text-lg font-bold text-indigo-900 dark:text-indigo-300 mb-2">Match Donor</h3>
+          <p className="text-sm text-indigo-700 dark:text-indigo-400 mb-4">
             Enter the Donor UID you wish to match to this request. This action is atomic and prevents double-booking.
           </p>
+          
+          {matchWarning && (
+            <div className="mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 p-4 rounded-lg shadow-sm">
+              <p className="font-bold mb-2 flex items-center gap-2">
+                <span className="text-xl">⚠️</span>
+                {matchWarning}
+              </p>
+            </div>
+          )}
+
           <div className="flex gap-3">
             <input 
               type="text" 
               value={donorUidToMatch}
-              onChange={(e) => setDonorUidToMatch(e.target.value)}
+              onChange={(e) => {
+                setDonorUidToMatch(e.target.value);
+                setMatchWarning(null);
+              }}
               placeholder="Donor UID"
-              className="flex-1 rounded-md border-indigo-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border"
+              className="flex-1 rounded-md border-indigo-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
               disabled={updatingStatus}
             />
-            <button 
-              onClick={handleMatchDonor}
-              disabled={updatingStatus || !donorUidToMatch.trim()}
-              className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm disabled:opacity-50"
-            >
-              {updatingStatus ? 'Acquiring lock...' : 'Confirm Match'}
-            </button>
+            {matchWarning ? (
+              <button 
+                onClick={() => handleMatchDonor(true)}
+                disabled={updatingStatus || !donorUidToMatch.trim()}
+                className="px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
+              >
+                {updatingStatus ? 'Acquiring lock...' : 'Proceed Anyway'}
+              </button>
+            ) : (
+              <button 
+                onClick={() => handleMatchDonor(false)}
+                disabled={updatingStatus || !donorUidToMatch.trim()}
+                className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm disabled:opacity-50"
+              >
+                {updatingStatus ? 'Acquiring lock...' : 'Confirm Match'}
+              </button>
+            )}
             <button 
               onClick={() => {
                 setShowMatchPrompt(false);
                 setDonorUidToMatch('');
+                setMatchWarning(null);
               }}
               disabled={updatingStatus}
-              className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium disabled:opacity-50"
+              className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 font-medium disabled:opacity-50"
             >
               Cancel
             </button>
@@ -276,34 +356,72 @@ export const RequestDetail = () => {
 
       {/* Donated Prompt Modal/Inline */}
       {showDonatedPrompt && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 shadow-sm">
-          <h3 className="text-lg font-bold text-emerald-900 mb-2">Confirm Donation Volume</h3>
-          <p className="text-sm text-emerald-700 mb-4">
-            Enter the actual volume (in units) donated by the matched donor. This will be recorded in their Donor History.
+        <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-6 shadow-sm mt-4">
+          <h3 className="text-lg font-bold text-emerald-900 dark:text-emerald-300 mb-2">Donation-Day Verification</h3>
+          <p className="text-sm text-emerald-700 dark:text-emerald-400 mb-4">
+            Verify the donor's blood group and enter the volume donated.
           </p>
+
+          <div className="space-y-4 mb-6">
+            <div>
+              <label className="block text-sm font-medium text-emerald-800 dark:text-emerald-400 mb-1">
+                Donor's Blood Group
+              </label>
+              {loadingDonor ? (
+                <div className="text-sm text-emerald-600">Loading donor profile...</div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <select
+                    value={confirmedBloodGroup}
+                    onChange={(e) => setConfirmedBloodGroup(e.target.value)}
+                    disabled={updatingStatus}
+                    className="flex-1 rounded-md border-emerald-300 dark:border-emerald-700 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm px-4 py-2 border bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="" disabled>Select Blood Group</option>
+                    {Object.entries(bloodGroups).map(([id, bg]) => (
+                      <option key={id} value={id}>{bg.name}</option>
+                    ))}
+                  </select>
+                  {matchedDonorProfile?.bloodGroupVerified && (
+                    <span className="text-xs font-bold text-emerald-600 bg-emerald-100 dark:bg-emerald-900/50 px-2 py-1 rounded-full uppercase tracking-wide">
+                      Already Verified
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-emerald-800 dark:text-emerald-400 mb-1">
+                Actual Volume Donated (units)
+              </label>
+              <input 
+                type="number" 
+                min="1"
+                value={donatedVolume}
+                onChange={(e) => setDonatedVolume(Number(e.target.value) || 1)}
+                className="w-24 rounded-md border-emerald-300 dark:border-emerald-700 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm px-4 py-2 border bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                disabled={updatingStatus}
+              />
+            </div>
+          </div>
+
           <div className="flex gap-3">
-            <input 
-              type="number" 
-              min="1"
-              value={donatedVolume}
-              onChange={(e) => setDonatedVolume(Number(e.target.value) || 1)}
-              className="w-24 rounded-md border-emerald-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm px-4 py-2 border"
-              disabled={updatingStatus}
-            />
             <button 
               onClick={handleConfirmDonated}
-              disabled={updatingStatus || donatedVolume < 1}
+              disabled={updatingStatus || donatedVolume < 1 || !confirmedBloodGroup}
               className="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 shadow-sm disabled:opacity-50"
             >
-              {updatingStatus ? 'Updating...' : 'Confirm Donation'}
+              {updatingStatus ? 'Updating...' : 'Confirm Donation & Verify'}
             </button>
             <button 
               onClick={() => {
                 setShowDonatedPrompt(false);
-                setDonatedVolume(1); // reset
+                setDonatedVolume(1);
+                setConfirmedBloodGroup('');
               }}
               disabled={updatingStatus}
-              className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium disabled:opacity-50"
+              className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 font-medium disabled:opacity-50"
             >
               Cancel
             </button>
@@ -339,6 +457,17 @@ export const RequestDetail = () => {
           </div>
         )}
       </div>
+
+      {isUnfulfilled && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl shadow-sm mt-4 flex items-start gap-3">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <h3 className="font-bold mb-1">No Eligible Donors Found</h3>
+            <p className="text-sm">This request was closed because no compatible, eligible donors could be found in time.</p>
+          </div>
+        </div>
+      )}
+
 
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col min-h-[500px]">

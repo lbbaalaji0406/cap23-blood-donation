@@ -1,0 +1,257 @@
+{
+  "active_donor_matches": {
+    "BAD_EMAIL_DONOR": {
+      "campId": "CAMP001",
+      "matchedAt": 1784983578079,
+      "requestId": "FAKE_REQ_456"
+    },
+    "v8w73Hjr7btDZKtmn7sjiRe0wxA1": {
+      "campId": "CAMP01",
+      "matchedAt": 1784984224260,
+      "requestId": "-OyOLCEfYBZsgA6yMHf-"
+    }
+  },
+  "audit_logs": {
+    "donation_requests": {
+      "-OyOLCEfYBZsgA6yMHf-": {
+        "-OyOLD_BvjhHrMFQ19Lj": {
+          "action": "UPDATE_STATUS",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Verified",
+          "beforeStatus": "Registered",
+          "status": "Success",
+          "timestamp": 1784984168786
+        },
+        "-OyOLR8NWHsjnUzzOpRw": {
+          "action": "MATCH_DONOR",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Matched",
+          "beforeStatus": "Verified",
+          "status": "Success",
+          "timestamp": 1784984224356
+        }
+      },
+      "FAKE_REQ_123": {
+        "-OyOIxt7OmpMtp1uhXEN": {
+          "action": "UPDATE_STATUS",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Donated",
+          "beforeStatus": "Matched",
+          "status": "Success",
+          "timestamp": 1784983576345
+        },
+        "-OyOJC4SV4Mv5jw-qnub": {
+          "action": "UPDATE_STATUS",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Donated",
+          "beforeStatus": "Matched",
+          "status": "Success",
+          "timestamp": 1784983638562
+        },
+        "-OyOJuHbgFtq3fkjsAc2": {
+          "action": "UPDATE_STATUS",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Donated",
+          "beforeStatus": "Matched",
+          "status": "Success",
+          "timestamp": 1784983823537
+        },
+        "-OyOK6PDRcN6lT2j5zjf": {
+          "action": "UPDATE_STATUS",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Donated",
+          "beforeStatus": "Matched",
+          "status": "Success",
+          "timestamp": 1784983877274
+        }
+      },
+      "FAKE_REQ_456": {
+        "-OyOIyLFmeOblmHXrilV": {
+          "action": "MATCH_DONOR",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "afterStatus": "Matched",
+          "beforeStatus": "Verified",
+          "status": "Success",
+          "timestamp": 1784983578202
+        },
+        "-OyOJCOiNadOuWbXub3C": {
+          "action": "MATCH_DONOR",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "failureReason": "Race condition lost: Donor matched to another request.",
+          "status": "Failed",
+          "timestamp": 1784983639859
+        },
+        "-OyOJua4IlVvinG5pepX": {
+          "action": "MATCH_DONOR",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "failureReason": "Race condition lost: Donor matched to another request.",
+          "status": "Failed",
+          "timestamp": 1784983824784
+        },
+        "-OyOK6i4G9YtUCAsTnJM": {
+          "action": "MATCH_DONOR",
+          "actorName": "Admin User",
+          "actorUid": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "failureReason": "Race condition lost: Donor matched to another request.",
+          "status": "Failed",
+          "timestamp": 1784983878546
+        }
+      }
+    }
+  },
+  "donor_eligibility": {
+    "NON_EXISTENT_DONOR_999": {
+      "lastDonationDate": 1784983877264
+    }
+  },
+  "donor_history": {
+    "NON_EXISTENT_DONOR_999": {
+      "FAKE_REQ_123": {
+        "campId": "CAMP001",
+        "donationDate": 1784983877264,
+        "requestId": "FAKE_REQ_123",
+        "verifiedBy": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+        "volume": 1
+      }
+    }
+  },
+  "email_failures": {
+    "-OyOIxtZD0092o_qLunz": {
+      "eventType": "Donated",
+      "reason": "donor profile fetch failed",
+      "requestId": "FAKE_REQ_123",
+      "timestamp": 1784983576360,
+      "uid": "NON_EXISTENT_DONOR_999"
+    },
+    "-OyOIyLlhk9QXT-j9YpF": {
+      "eventType": "Matched",
+      "reason": "Missing API key. Pass it to the constructor `new Resend(\"re_123\")`",
+      "requestId": "FAKE_REQ_456",
+      "timestamp": 1784983578235,
+      "uid": "BAD_EMAIL_DONOR"
+    },
+    "-OyOJC4gnCBUOdOC-0x6": {
+      "eventType": "Donated",
+      "reason": "donor profile fetch failed",
+      "requestId": "FAKE_REQ_123",
+      "timestamp": 1784983638576,
+      "uid": "NON_EXISTENT_DONOR_999"
+    },
+    "-OyOJuHpn4XDnYDu0v93": {
+      "eventType": "Donated",
+      "reason": "donor profile fetch failed",
+      "requestId": "FAKE_REQ_123",
+      "timestamp": 1784983823551,
+      "uid": "NON_EXISTENT_DONOR_999"
+    },
+    "-OyOK6PXEZw6g78_SZcY": {
+      "eventType": "Donated",
+      "reason": "donor profile fetch failed",
+      "requestId": "FAKE_REQ_123",
+      "timestamp": 1784983877293,
+      "uid": "NON_EXISTENT_DONOR_999"
+    },
+    "-OyOLRXWhXPmcUWrXc7b": {
+      "eventType": "Matched",
+      "reason": "API access from non-browser environments is currently disabled.Enable this option in https://dashboard.emailjs.com/admin/account/security",
+      "requestId": "-OyOLCEfYBZsgA6yMHf-",
+      "timestamp": 1784984225981,
+      "uid": "v8w73Hjr7btDZKtmn7sjiRe0wxA1"
+    }
+  },
+  "masters": {
+    "blood_group": {
+      "A_minus": {
+        "active": true,
+        "code": "A-",
+        "compatibleRecipients": [
+          "A+"
+        ],
+        "createdAt": "2026-07-25T12:54:57.331Z",
+        "createdBy": "admin@example.com",
+        "name": "a negative"
+      }
+    },
+    "camp": {
+      "CAMP01": {
+        "active": true,
+        "code": "CAMP01",
+        "createdAt": "2026-07-25T12:55:24.318Z",
+        "createdBy": "admin@example.com",
+        "name": "main camp 1"
+      }
+    },
+    "hospital": {
+      "HOSPO1": {
+        "active": true,
+        "address": "adhuhejsn ecnjnj",
+        "code": "HOSPO1",
+        "createdAt": "2026-07-25T12:55:43.501Z",
+        "createdBy": "admin@example.com",
+        "name": "phc"
+      }
+    }
+  },
+  "transactions": {
+    "donation_request": {
+      "CAMP001": {
+        "FAKE_REQ_123": {
+          "blood_groupId": "O_pos",
+          "matchedDonorId": "NON_EXISTENT_DONOR_999",
+          "recipientHospitalId": "HOS001",
+          "recipientName": "Test Patient",
+          "status": "Donated",
+          "updatedAt": 1784983877264
+        },
+        "FAKE_REQ_456": {
+          "blood_groupId": "O_pos",
+          "recipientHospitalId": "HOS001",
+          "recipientName": "Test Patient 2",
+          "status": "Verified"
+        }
+      },
+      "CAMP01": {
+        "-OyOLCEfYBZsgA6yMHf-": {
+          "blood_groupId": "A_minus",
+          "createdAt": 1784984163339,
+          "createdBy": "j0XYaHqqdshStxb1VBd4m6XiI0hN",
+          "matchedDonorId": "v8w73Hjr7btDZKtmn7sjiRe0wxA1",
+          "recipientHospitalId": "HOSPO1",
+          "recipientName": "fjeij",
+          "status": "Matched",
+          "unitsNeeded": 1,
+          "updatedAt": 1784984224309,
+          "urgency": "Critical"
+        }
+      }
+    }
+  },
+  "users": {
+    "BAD_EMAIL_DONOR": {
+      "email": "fail-emailjs@example.com",
+      "name": "Bad Donor",
+      "role": "Donor"
+    },
+    "j0XYaHqqdshStxb1VBd4m6XiI0hN": {
+      "createdAt": "2026-07-25T12:45:32.346Z",
+      "email": "admin@example.com",
+      "name": "Admin User",
+      "role": "Admin"
+    },
+    "v8w73Hjr7btDZKtmn7sjiRe0wxA1": {
+      "createdAt": "2026-07-25T12:45:55.659Z",
+      "email": "baalanish7guardians@gmail.com",
+      "name": "Test Donor",
+      "role": "Donor"
+    }
+  }
+}

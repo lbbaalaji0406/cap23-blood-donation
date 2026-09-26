@@ -89,12 +89,12 @@ export const ReportsDashboard = () => {
       reportService.exportToExcel(rows, 'Status_Report');
     } else if (activeTab === 'activity' && activityData) {
       const rows = activityData.map(a => ({
-        RequestID: a.transactionId,
-        Date: new Date(a.createdAt).toLocaleString(),
+        RequestID: a.id,
+        Date: new Date(a.timestamp).toLocaleString(),
         Actor: a.actorName,
         Action: a.action,
-        Outcome: a.outcome,
-        Details: a.outcome === 'Success' ? `${a.beforeStatus || ''} -> ${a.afterStatus || ''}` : a.failureReason
+        Status: a.status,
+        Details: a.status === 'Success' ? `${a.beforeStatus || ''} -> ${a.afterStatus || ''}` : a.failureReason
       }));
       reportService.exportToExcel(rows, 'Activity_Report');
     }
@@ -122,14 +122,14 @@ export const ReportsDashboard = () => {
       reportService.exportToPDF('Status Report (Open Requests)', ['ID', 'Camp', 'Recipient', 'BG', 'Units', 'Status', 'Date'], data, 'Status_Report');
     } else if (activeTab === 'activity' && activityData) {
       const data = activityData.map(a => [
-        a.transactionId.slice(-6),
-        new Date(a.createdAt).toLocaleString(),
+        a.id ? a.id.slice(-6) : '',
+        new Date(a.timestamp).toLocaleString(),
         a.actorName,
         a.action,
-        a.outcome,
-        a.outcome === 'Success' ? `${a.beforeStatus || ''} -> ${a.afterStatus || ''}` : (a.failureReason || '')
+        a.status,
+        a.status === 'Success' ? `${a.beforeStatus || ''} -> ${a.afterStatus || ''}` : (a.failureReason || '')
       ]);
-      reportService.exportToPDF('Activity Audit Trail', ['Req ID', 'Date', 'Actor', 'Action', 'Outcome', 'Details'], data, 'Activity_Report');
+      reportService.exportToPDF('Activity Audit Trail', ['Req ID', 'Date', 'Actor', 'Action', 'Status', 'Details'], data, 'Activity_Report');
     }
   };
 
@@ -272,9 +272,9 @@ export const ReportsDashboard = () => {
                <tbody className="bg-white divide-y divide-slate-200">
                  {activityData.map(a => (
                    <tr key={a.id}>
-                     <td className="px-3 py-4 whitespace-nowrap text-sm text-slate-500">{new Date(a.createdAt).toLocaleString()}</td>
+                     <td className="px-3 py-4 whitespace-nowrap text-sm text-slate-500">{new Date(a.timestamp).toLocaleString()}</td>
                      <td className="px-3 py-4 whitespace-nowrap text-sm text-slate-900">{a.action}</td>
-                     <td className={`px-3 py-4 whitespace-nowrap text-sm font-medium ${a.outcome === 'Success' ? 'text-emerald-600' : 'text-rose-600'}`}>{a.outcome}</td>
+                     <td className={`px-3 py-4 whitespace-nowrap text-sm font-medium ${a.status === 'Success' ? 'text-emerald-600' : 'text-rose-600'}`}>{a.status}</td>
                    </tr>
                  ))}
                </tbody>

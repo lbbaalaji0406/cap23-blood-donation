@@ -15,6 +15,21 @@ export const bloodGroupCodes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'
 // Generate ID from code safely (e.g. A+ -> A_plus)
 export const sanitizeId = (code: string) => code.replace('+', '_plus').replace('-', '_minus');
 
+export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[] => {
+  // Returns the list of donor blood group IDs that are compatible with the recipient
+  switch (recipientBloodGroupId) {
+    case 'A_plus': return ['A_plus', 'A_minus', 'O_plus', 'O_minus'];
+    case 'A_minus': return ['A_minus', 'O_minus'];
+    case 'B_plus': return ['B_plus', 'B_minus', 'O_plus', 'O_minus'];
+    case 'B_minus': return ['B_minus', 'O_minus'];
+    case 'AB_plus': return ['A_plus', 'A_minus', 'B_plus', 'B_minus', 'AB_plus', 'AB_minus', 'O_plus', 'O_minus'];
+    case 'AB_minus': return ['A_minus', 'B_minus', 'AB_minus', 'O_minus'];
+    case 'O_plus': return ['O_plus', 'O_minus'];
+    case 'O_minus': return ['O_minus'];
+    default: return [];
+  }
+};
+
 export const saveBloodGroup = async (bg: BloodGroup) => {
   const id = sanitizeId(bg.code);
   await set(ref(db, `masters/blood_group/${id}`), bg);
