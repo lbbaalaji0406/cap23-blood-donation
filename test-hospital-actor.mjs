@@ -1,5 +1,6 @@
 import { initializeApp as adminInit } from 'firebase-admin/app';
 import { getDatabase as adminDb } from 'firebase-admin/database';
+import { getAuth as adminAuth } from 'firebase-admin/auth';
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
@@ -66,6 +67,7 @@ const adminApp = adminInit({
   databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation-default-rtdb"
 }, 'adminForHospitalTests_' + Date.now());
 const db = adminDb(adminApp);
+const authAdmin = adminAuth(adminApp);
 
 const clientApp = initializeApp({
   apiKey: "fake-api-key",
@@ -118,14 +120,20 @@ async function runLiveTests() {
   assert(hospData.componentType === 'Platelets', 'Platelet component properly captured in hospital queue');
   assert(campData.patientId === 'IP-8821' && hospData.patientId === 'IP-8821', 'Patient IP/Bed number preserved across both queues');
 
-  console.log("\n--- 3. Real Cloud Function Execution: processWorkflowState (Match Response Sync) ---");
+  console.log("\n--- 3. Real Cloud Function Execution: RESPOND_TO_MATCH (Donor Auth Boundaries & Override) ---");
 
-  // Seed two donor matches for this request
-  const donor1Uid = 'DONOR_LIVE_TEST_1';
+  // NOTE: Matches are seeded directly here to isolate the match-response authorization lifecycle
+  // and multi-path dual-index synchronization. The automated match-generation algorithm
+  // (ABO/Rh compatibility & transfusion cooldown scanning) is verified end-to-end in test-component-cooldowns.mjs.
+  
+  // 3.1 Fetch real donor account credentials from emulator
+  await signOut(auth);
+  const donorUserCred = await signInWithEmailAndPassword(auth, 'donor@example.com', 'password123');
+  const realDonorUid = donorUserCred.user.uid;
   const donor2Uid = 'DONOR_LIVE_TEST_2';
 
-  await db.ref(`matches/${createdRequestId}/${donor1Uid}`).set({
-    donorUid: donor1Uid,
+  await db.ref(`matches/${createdRequestId}/${realDonorUid}`).set({
+    donorUid: realDonorUid,
     status: 'pending_response',
     matchedAt: Date.now()
   });
@@ -135,21 +143,37 @@ async function runLiveTests() {
     matchedAt: Date.now()
   });
 
-  // Switch authentication to Camp Manager (CAMP001)
-  await signOut(auth);
-  await signInWithEmailAndPassword(auth, 'manager@example.com', 'password123');
   const workflowFn = httpsCallable(fns, 'processWorkflowState');
 
-  // Donor 1 accepts -> Call real Cloud Function
+  // 3.2 Authorization Exploit Check: Donor attempts to respond on behalf of a different donor UID
+  try {
+    await workflowFn({
+      action: 'RESPOND_TO_MATCH',
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      donorUid: donor2Uid,
+      response: 'accept'
+    });
+    assert(false, 'Donor responding to another donor match should be REJECTED', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isDenied = err.message.includes('permission-denied') || err.message.includes('only respond to their own matches');
+    assert(
+      isDenied,
+      'Real Cloud Function REJECTS donor responding to another donor UID (request.auth.uid === donorUid enforced)',
+      `Error received: ${err.message}`
+    );
+  }
+
+  // 3.3 Primary Path: Real Donor responds to their OWN match
   await workflowFn({
     action: 'RESPOND_TO_MATCH',
     campId: 'CAMP001',
     requestId: createdRequestId,
-    donorUid: donor1Uid,
+    donorUid: realDonorUid,
     response: 'accept'
   });
 
-  // Read live database state
+  // Verify real-time database synchronization after Donor self-response
   const campSnapAfter1 = (await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get()).val();
   const hospSnapAfter1 = (await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get()).val();
 
@@ -158,7 +182,16 @@ async function runLiveTests() {
   assert(campSnapAfter1.status === 'Partially Matched', 'Camp queue status transitioned to Partially Matched');
   assert(hospSnapAfter1.status === 'Partially Matched', 'Hospital queue status synchronized to Partially Matched');
 
-  // Donor 2 accepts -> Call real Cloud Function
+  // Verify audit log explicitly records "Donor Self-Response"
+  const auditLogsSnap1 = await db.ref(`audit_logs/donation_requests/${createdRequestId}`).get();
+  const audits1 = Object.values(auditLogsSnap1.val() || {});
+  const donorSelfLog = audits1.find(a => (a.details && a.details.includes('Donor Self-Response')) || (a.afterStatus && a.afterStatus.includes('Donor Self-Response')));
+  assert(Boolean(donorSelfLog), 'Audit log distinctly records "Donor Self-Response"', donorSelfLog?.details || donorSelfLog?.afterStatus);
+
+  // 3.4 Coordinator Override Path: Camp Manager records verbal response for Donor 2
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'manager@example.com', 'password123');
+
   await workflowFn({
     action: 'RESPOND_TO_MATCH',
     campId: 'CAMP001',
@@ -175,11 +208,32 @@ async function runLiveTests() {
   assert(campSnapAfter2.status === 'Matched', 'Camp queue status transitioned to Matched');
   assert(hospSnapAfter2.status === 'Matched', 'Hospital queue status synchronized to Matched');
 
-  console.log("\n--- 4. Real Cloud Function Execution: cancelHospitalRequisition (Authorization & Constraints) ---");
+  // Verify audit log explicitly records "Coordinator Override" with manager name and target donor UID
+  const auditLogsSnap2 = await db.ref(`audit_logs/donation_requests/${createdRequestId}`).get();
+  const audits2 = Object.values(auditLogsSnap2.val() || {});
+  const overrideLog = audits2.find(a => (a.details && a.details.includes('Coordinator Override')) || (a.afterStatus && a.afterStatus.includes('Coordinator Override')));
+  assert(Boolean(overrideLog), 'Audit log distinctly records "Coordinator Override" for manager action', overrideLog?.details || overrideLog?.afterStatus);
 
-  // Switch back to Hospital Staff
+  // 3.5 Hospital Actor Forbidden: Confirm Hospital role CANNOT call RESPOND_TO_MATCH
   await signOut(auth);
   await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
+  try {
+    await workflowFn({
+      action: 'RESPOND_TO_MATCH',
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      donorUid: donor2Uid,
+      response: 'accept'
+    });
+    assert(false, 'Hospital calling RESPOND_TO_MATCH should be REJECTED', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isDenied = err.code === 'permission-denied' || err.code === 'functions/permission-denied' || err.message.includes('permission-denied') || err.message.includes('Only Donors or Camp Coordinators');
+    assert(isDenied, 'Real Cloud Function REJECTS Hospital role calling RESPOND_TO_MATCH', `Error: [${err.code}] ${err.message}`);
+  }
+
+  console.log("\n--- 4. Real Cloud Function Execution: cancelHospitalRequisition (Authorization & Constraints) ---");
+
+  // Authenticated as Hospital Staff (hospital@example.com)
   const cancelFn = httpsCallable(fns, 'cancelHospitalRequisition');
 
   // 4.1: Attempt to cancel a requisition in 'Matched' status -> Must be REJECTED by real Cloud Function
@@ -199,8 +253,21 @@ async function runLiveTests() {
     );
   }
 
-  // 4.2: Create a second Hospital user belonging to HOS002 to test cross-hospital cancellation
-  const rivalHospitalUid = 'RIVAL_HOSPITAL_USER_UID';
+  // 4.2: Provision rival hospital user (Auth user created first, followed by RTDB profile)
+  // We provision a user belonging to HOS002 to test multi-tenant cross-hospital isolation.
+  let rivalHospitalUid;
+  try {
+    const rivalRecord = await authAdmin.createUser({
+      email: 'rival@apollo.org',
+      password: 'password123',
+      displayName: 'Dr. Rival (Apollo Hospital)'
+    });
+    rivalHospitalUid = rivalRecord.uid;
+  } catch (e) {
+    const existing = await authAdmin.getUserByEmail('rival@apollo.org');
+    rivalHospitalUid = existing.uid;
+  }
+
   await db.ref(`users/${rivalHospitalUid}`).set({
     email: 'rival@apollo.org',
     name: 'Dr. Rival',
@@ -209,7 +276,7 @@ async function runLiveTests() {
     accountStatus: 'active'
   });
 
-  // Submit a fresh 'Registered' requisition to test legal cancellation and cross-cancellation
+  // Submit a fresh 'Registered' requisition as HOS001 to test legal cancellation and cross-cancellation
   const req2Result = await submitFn({
     campId: 'CAMP001',
     recipientName: 'Anita Roy',
@@ -222,16 +289,7 @@ async function runLiveTests() {
   });
   const req2Id = req2Result.data.requestId;
 
-  // 4.3: Cross-hospital cancellation attempt
-  // Create rival auth account in emulator if not existing
-  const { getAuth: adminGetAuth } = await import('firebase-admin/auth');
-  const authAdmin = adminGetAuth(adminApp);
-  try {
-    await authAdmin.createUser({ uid: rivalHospitalUid, email: 'rival@apollo.org', password: 'password123' });
-  } catch (e) {
-    // Already created
-  }
-
+  // 4.3: Cross-hospital cancellation attempt (Rival HOS002 trying to cancel HOS001 requisition)
   await signOut(auth);
   await signInWithEmailAndPassword(auth, 'rival@apollo.org', 'password123');
 

@@ -393,23 +393,49 @@ export const processWorkflowState = functions.https.onCall({ secrets: [emailjsSe
 
   const callerProfile = callerSnapshot.val();
 
-  // Validate caller permissions
-  if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId) {
-    throw new functions.https.HttpsError('permission-denied', 'User does not have access to this camp.');
-  }
-
+  // Action-specific role and permission verification
   if (action === 'MATCH_DONOR') {
+    if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId) {
+      throw new functions.https.HttpsError('permission-denied', 'Only Camp Managers or Admins can match donors.');
+    }
     if (!donorUid) {
       throw new functions.https.HttpsError('invalid-argument', 'Missing donorUid for MATCH_DONOR action.');
     }
     return await handleMatchDonor(campId, requestId, donorUid, auth.uid, callerProfile.name || 'Unknown');
   } else if (action === 'RESPOND_TO_MATCH') {
     const { response } = data;
-    if (!donorUid || !response) {
-      throw new functions.https.HttpsError('invalid-argument', 'Missing parameters for RESPOND_TO_MATCH action.');
+    if (!response || (response !== 'accept' && response !== 'decline')) {
+      throw new functions.https.HttpsError('invalid-argument', 'Valid response (accept or decline) is required.');
     }
-    return await handleRespondToMatch(campId, requestId, donorUid, response, auth.uid, callerProfile.name || 'Unknown');
+
+    let targetDonorUid: string;
+    let isCoordinatorOverride = false;
+
+    if (callerProfile.role === 'Donor') {
+      // Primary Path: Donor responds to their OWN match only
+      if (donorUid && donorUid !== auth.uid) {
+        throw new functions.https.HttpsError('permission-denied', 'Donors can only respond to their own matches.');
+      }
+      targetDonorUid = auth.uid;
+    } else if (callerProfile.role === 'Manager' || callerProfile.role === 'Admin') {
+      // Coordinator Override Path: Manager/Admin records donor's verbal/phone response
+      if (callerProfile.role === 'Manager' && callerProfile.campId !== campId) {
+        throw new functions.https.HttpsError('permission-denied', 'Manager does not have access to this camp.');
+      }
+      if (!donorUid) {
+        throw new functions.https.HttpsError('invalid-argument', 'Missing donorUid for coordinator match response.');
+      }
+      targetDonorUid = donorUid;
+      isCoordinatorOverride = true;
+    } else {
+      throw new functions.https.HttpsError('permission-denied', 'Only Donors or Camp Coordinators can respond to matches.');
+    }
+
+    return await handleRespondToMatch(campId, requestId, targetDonorUid, response, auth.uid, callerProfile.name || 'Unknown', isCoordinatorOverride);
   } else if (action === 'UPDATE_STATUS') {
+    if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId) {
+      throw new functions.https.HttpsError('permission-denied', 'Only Camp Managers or Admins can update status.');
+    }
     const { currentStatus, newStatus, donorUid, volume, bloodGroup } = data;
     if (!currentStatus || !newStatus) {
       throw new functions.https.HttpsError('invalid-argument', 'Missing status parameters.');
@@ -675,7 +701,15 @@ async function findNextEligibleDonor(campId: string, requestId: string, recipien
   return null;
 }
 
-async function handleRespondToMatch(campId: string, requestId: string, donorUid: string, response: 'accept' | 'decline', actorUid: string, actorName: string) {
+async function handleRespondToMatch(
+  campId: string, 
+  requestId: string, 
+  donorUid: string, 
+  response: 'accept' | 'decline', 
+  actorUid: string, 
+  actorName: string,
+  isCoordinatorOverride: boolean = false
+) {
   const db = admin.database();
 
   const matchRef = db.ref(`matches/${requestId}/${donorUid}`);
@@ -729,17 +763,24 @@ async function handleRespondToMatch(campId: string, requestId: string, donorUid:
 
     await db.ref().update(matchAcceptUpdates);
 
-    await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', `Accepted (${newReqStatus})`);
+    const auditDetails = isCoordinatorOverride
+      ? `Coordinator Override: Response recorded by ${actorName} (${actorUid}) on behalf of donor ${donorUid}: Accepted (${newReqStatus})`
+      : `Donor Self-Response: Accepted (${newReqStatus})`;
+
+    await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', newReqStatus, auditDetails);
     return { success: true };
   } else if (response === 'decline') {
-    await matchRef.update({
-      status: 'declined',
-      respondedAt: { '.sv': 'timestamp' }
-    });
+    const matchDeclineUpdates: Record<string, any> = {};
+    matchDeclineUpdates[`matches/${requestId}/${donorUid}/status`] = 'declined';
+    matchDeclineUpdates[`matches/${requestId}/${donorUid}/respondedAt`] = { '.sv': 'timestamp' };
+    matchDeclineUpdates[`active_donor_matches/${donorUid}`] = null;
+    await db.ref().update(matchDeclineUpdates);
 
-    // Release lock
-    await db.ref(`active_donor_matches/${donorUid}`).remove();
-    await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', 'Declined');
+    const auditDetails = isCoordinatorOverride
+      ? `Coordinator Override: Response recorded by ${actorName} (${actorUid}) on behalf of donor ${donorUid}: Declined`
+      : 'Donor Self-Response: Declined';
+
+    await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', 'Declined', auditDetails);
 
     const urgency = requestDetails.urgency || 'Routine';
     if (urgency === 'Critical' || urgency === 'Urgent') {
@@ -752,7 +793,7 @@ async function handleRespondToMatch(campId: string, requestId: string, donorUid:
       if (replacementDonor) {
         await handleMatchDonor(campId, requestId, replacementDonor, 'SYSTEM', 'Auto-Match System');
         if (urgency === 'Critical') {
-           await logAudit(requestId, 'SYSTEM', 'Auto-Match System', 'AUTO_MATCH', 'Success', null, undefined, `Auto-matched replacement donor ${replacementDonor} for Critical request after decline`);
+           await logAudit(requestId, 'SYSTEM', 'Auto-Match System', 'AUTO_MATCH', 'Success', null, undefined, undefined, `Auto-matched replacement donor ${replacementDonor} for Critical request after decline`);
         } else if (urgency === 'Urgent') {
            await requestRef.update({ needsAdminAttention: true });
         }
@@ -775,7 +816,8 @@ async function logAudit(
   status: string, 
   failureReason?: string | null,
   beforeStatus?: string,
-  afterStatus?: string
+  afterStatus?: string,
+  details?: string
 ) {
   const auditRef = admin.database().ref(`audit_logs/donation_requests/${requestId}`).push();
   const logEntry: any = {
@@ -789,6 +831,11 @@ async function logAudit(
   if (failureReason) logEntry.failureReason = failureReason;
   if (beforeStatus) logEntry.beforeStatus = beforeStatus;
   if (afterStatus) logEntry.afterStatus = afterStatus;
+  if (details) {
+    logEntry.details = details;
+  } else if (afterStatus && afterStatus.includes(':')) {
+    logEntry.details = afterStatus;
+  }
   
   await auditRef.set(logEntry);
 }
