@@ -710,24 +710,24 @@ async function handleRespondToMatch(campId: string, requestId: string, donorUid:
       throw new functions.https.HttpsError('internal', 'Failed to update unitsSecured');
     }
 
-    await matchRef.update({
-      status: 'accepted',
-      respondedAt: { '.sv': 'timestamp' }
-    });
-
     let newReqStatus = 'Partially Matched';
     if (updatedUnitsSecured >= requestDetails.unitsNeeded) {
       newReqStatus = 'Matched';
     }
-    await requestRef.update({ status: newReqStatus });
+
+    const matchAcceptUpdates: Record<string, any> = {};
+    matchAcceptUpdates[`matches/${requestId}/${donorUid}/status`] = 'accepted';
+    matchAcceptUpdates[`matches/${requestId}/${donorUid}/respondedAt`] = { '.sv': 'timestamp' };
+    matchAcceptUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newReqStatus;
+    matchAcceptUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
 
     if (requestDetails.recipientHospitalId) {
-      await db.ref(`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}`).update({
-        status: newReqStatus,
-        unitsSecured: updatedUnitsSecured,
-        updatedAt: { '.sv': 'timestamp' }
-      });
+      matchAcceptUpdates[`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}/status`] = newReqStatus;
+      matchAcceptUpdates[`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}/unitsSecured`] = updatedUnitsSecured;
+      matchAcceptUpdates[`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
     }
+
+    await db.ref().update(matchAcceptUpdates);
 
     await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', `Accepted (${newReqStatus})`);
     return { success: true };
