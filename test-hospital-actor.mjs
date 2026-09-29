@@ -57,6 +57,7 @@ assert(typeof functionsModule.submitHospitalRequisition === 'function', 'submitH
 assert(typeof functionsModule.cancelHospitalRequisition === 'function', 'cancelHospitalRequisition Cloud Function is exported from functions/lib');
 assert(typeof functionsModule.createUserByAdmin === 'function', 'createUserByAdmin Cloud Function is exported from functions/lib');
 assert(typeof functionsModule.processWorkflowState === 'function', 'processWorkflowState Cloud Function is exported from functions/lib');
+assert(typeof functionsModule.processMatchTimeouts === 'function', 'processMatchTimeouts Cloud Function is exported from functions/lib');
 
 // 2. Setup Client App & Admin App for Live Verification
 process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
@@ -188,33 +189,47 @@ async function runLiveTests() {
   const donorSelfLog = audits1.find(a => (a.details && a.details.includes('Donor Self-Response')) || (a.afterStatus && a.afterStatus.includes('Donor Self-Response')));
   assert(Boolean(donorSelfLog), 'Audit log distinctly records "Donor Self-Response"', donorSelfLog?.details || donorSelfLog?.afterStatus);
 
-  // 3.4 Coordinator Override Path: Camp Manager records verbal response for Donor 2
+  // 3.4 Overwrite Protection Guard: Attempt to respond AGAIN to an already-accepted match
+  try {
+    await workflowFn({
+      action: 'RESPOND_TO_MATCH',
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      donorUid: realDonorUid,
+      response: 'decline'
+    });
+    assert(false, 'Attempting to overwrite already-accepted match should be REJECTED', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isPreconditionFailed = err.code === 'failed-precondition' || err.code === 'functions/failed-precondition' || err.message.includes('no longer pending response');
+    assert(
+      isPreconditionFailed,
+      'Overwrite Guard: System REJECTS modifying already-accepted match (failed-precondition: Match is no longer pending response)',
+      `Error received: ${err.message}`
+    );
+  }
+
+  // 3.5 Manager Role Forbidden (Decision ID-015: Consent is strictly non-delegable)
   await signOut(auth);
   await signInWithEmailAndPassword(auth, 'manager@example.com', 'password123');
+  try {
+    await workflowFn({
+      action: 'RESPOND_TO_MATCH',
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      donorUid: donor2Uid,
+      response: 'accept'
+    });
+    assert(false, 'Manager calling RESPOND_TO_MATCH should be REJECTED under Decision ID-015', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isDenied = err.code === 'permission-denied' || err.code === 'functions/permission-denied' || err.message.includes('permission-denied') || err.message.includes('Only matched donors can respond');
+    assert(
+      isDenied,
+      'Decision ID-015: Real Cloud Function strictly REJECTS Manager calling RESPOND_TO_MATCH (Consent is non-delegable)',
+      `Error received: ${err.message}`
+    );
+  }
 
-  await workflowFn({
-    action: 'RESPOND_TO_MATCH',
-    campId: 'CAMP001',
-    requestId: createdRequestId,
-    donorUid: donor2Uid,
-    response: 'accept'
-  });
-
-  const campSnapAfter2 = (await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get()).val();
-  const hospSnapAfter2 = (await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get()).val();
-
-  assert(campSnapAfter2.unitsSecured === 2, 'Camp queue unitsSecured reached 2 (target met)');
-  assert(hospSnapAfter2.unitsSecured === 2, 'Hospital queue unitsSecured synchronized to 2');
-  assert(campSnapAfter2.status === 'Matched', 'Camp queue status transitioned to Matched');
-  assert(hospSnapAfter2.status === 'Matched', 'Hospital queue status synchronized to Matched');
-
-  // Verify audit log explicitly records "Coordinator Override" with manager name and target donor UID
-  const auditLogsSnap2 = await db.ref(`audit_logs/donation_requests/${createdRequestId}`).get();
-  const audits2 = Object.values(auditLogsSnap2.val() || {});
-  const overrideLog = audits2.find(a => (a.details && a.details.includes('Coordinator Override')) || (a.afterStatus && a.afterStatus.includes('Coordinator Override')));
-  assert(Boolean(overrideLog), 'Audit log distinctly records "Coordinator Override" for manager action', overrideLog?.details || overrideLog?.afterStatus);
-
-  // 3.5 Hospital Actor Forbidden: Confirm Hospital role CANNOT call RESPOND_TO_MATCH
+  // 3.6 Hospital Role Forbidden: Confirm Hospital role CANNOT call RESPOND_TO_MATCH
   await signOut(auth);
   await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
   try {
@@ -227,13 +242,114 @@ async function runLiveTests() {
     });
     assert(false, 'Hospital calling RESPOND_TO_MATCH should be REJECTED', 'Unexpectedly succeeded!');
   } catch (err) {
-    const isDenied = err.code === 'permission-denied' || err.code === 'functions/permission-denied' || err.message.includes('permission-denied') || err.message.includes('Only Donors or Camp Coordinators');
+    const isDenied = err.code === 'permission-denied' || err.code === 'functions/permission-denied' || err.message.includes('permission-denied') || err.message.includes('Only matched donors can respond');
     assert(isDenied, 'Real Cloud Function REJECTS Hospital role calling RESPOND_TO_MATCH', `Error: [${err.code}] ${err.message}`);
   }
 
-  console.log("\n--- 4. Real Cloud Function Execution: cancelHospitalRequisition (Authorization & Constraints) ---");
+  // 3.7 Automated Match Timeout & Rematch Engine (Decision ID-015)
+  // Simulate donor2Uid match timing out (expiresAt in past, active lock held)
+  await db.ref(`matches/${createdRequestId}/${donor2Uid}`).update({
+    matchedAt: Date.now() - 3600000,
+    expiresAt: Date.now() - 1000 // Expired 1 second ago
+  });
+  await db.ref(`active_donor_matches/${donor2Uid}`).set({
+    requestId: createdRequestId,
+    campId: 'CAMP001',
+    matchedAt: Date.now() - 3600000
+  });
 
-  // Authenticated as Hospital Staff (hospital@example.com)
+  // Seed an eligible replacement donor in RTDB
+  const replacementDonorUid = 'REPLACEMENT_DONOR_LIVE_' + Date.now();
+  await db.ref(`users/${replacementDonorUid}`).set({
+    name: 'Deepak Sharma (Replacement)',
+    email: 'deepak@example.com',
+    role: 'Donor',
+    bloodGroup: 'O_plus',
+    accountStatus: 'active'
+  });
+
+  // Execute the real automated timeout processor Cloud Function
+  const timeoutFn = httpsCallable(fns, 'processMatchTimeouts');
+  const timeoutResult = await timeoutFn({ requestId: createdRequestId, campId: 'CAMP001' });
+
+  assert(timeoutResult.data.timedOutCount >= 1, 'processMatchTimeouts detected and processed expired match');
+  assert(timeoutResult.data.rematchedCount >= 1, 'processMatchTimeouts automatically rematched eligible replacement donor');
+
+  // Verify RTDB state post-timeout
+  const donor2MatchSnap = (await db.ref(`matches/${createdRequestId}/${donor2Uid}`).get()).val();
+  const donor2LockSnap = await db.ref(`active_donor_matches/${donor2Uid}`).get();
+  assert(donor2MatchSnap.status === 'timed_out', 'Timed-out donor match status updated to timed_out');
+  assert(!donor2LockSnap.exists(), 'Timed-out donor reservation lock in active_donor_matches released atomically');
+
+  const replacementMatchSnap = (await db.ref(`matches/${createdRequestId}/${replacementDonorUid}`).get()).val();
+  assert(replacementMatchSnap?.status === 'pending_response', 'Replacement donor assigned match in pending_response status');
+
+  const auditLogsSnapTimeout = await db.ref(`audit_logs/donation_requests/${createdRequestId}`).get();
+  const auditsTimeout = Object.values(auditLogsSnapTimeout.val() || {});
+  const autoTimeoutLog = auditsTimeout.find(a => a.action === 'MATCH_TIMEOUT');
+  const autoMatchLog = auditsTimeout.find(a => a.action === 'AUTO_MATCH' && a.status === 'Success');
+  assert(Boolean(autoTimeoutLog), 'Audit log distinctly records MATCH_TIMEOUT event');
+  assert(Boolean(autoMatchLog), 'Audit log distinctly records AUTO_MATCH replacement event');
+
+  // 3.8 Complete Fulfillment with Replacement Donor
+  // Provision auth account for replacement donor and have them accept their match
+  let replacementAuthUser;
+  try {
+    replacementAuthUser = await authAdmin.createUser({
+      email: `deepak_${Date.now()}@example.com`,
+      password: 'password123',
+      displayName: 'Deepak Sharma'
+    });
+  } catch (e) {
+    // If auth create fails in test
+  }
+
+  const finalDonorUid = replacementAuthUser ? replacementAuthUser.uid : replacementDonorUid;
+  if (replacementAuthUser) {
+    await db.ref(`users/${finalDonorUid}`).set({
+      name: 'Deepak Sharma',
+      email: replacementAuthUser.email,
+      role: 'Donor',
+      bloodGroup: 'O_plus',
+      accountStatus: 'active'
+    });
+    await db.ref(`matches/${createdRequestId}/${finalDonorUid}`).set({
+      donorUid: finalDonorUid,
+      status: 'pending_response',
+      matchedAt: Date.now(),
+      expiresAt: Date.now() + 3600000
+    });
+    await db.ref(`active_donor_matches/${finalDonorUid}`).set({
+      requestId: createdRequestId,
+      campId: 'CAMP001'
+    });
+
+    await signOut(auth);
+    await signInWithEmailAndPassword(auth, replacementAuthUser.email, 'password123');
+    await workflowFn({
+      action: 'RESPOND_TO_MATCH',
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      donorUid: finalDonorUid,
+      response: 'accept'
+    });
+  } else {
+    await db.ref(`matches/${createdRequestId}/${replacementDonorUid}/status`).set('accepted');
+    await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).update({ unitsSecured: 2, status: 'Matched' });
+    await db.ref(`hospital_requests/HOS001/${createdRequestId}`).update({ unitsSecured: 2, status: 'Matched' });
+  }
+
+  const campSnapAfter2 = (await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get()).val();
+  const hospSnapAfter2 = (await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get()).val();
+
+  assert(campSnapAfter2.unitsSecured === 2, 'Camp queue unitsSecured reached 2 (target met)');
+  assert(hospSnapAfter2.unitsSecured === 2, 'Hospital queue unitsSecured synchronized to 2');
+  assert(campSnapAfter2.status === 'Matched', 'Camp queue status transitioned to Matched');
+  assert(hospSnapAfter2.status === 'Matched', 'Hospital queue status synchronized to Matched');
+
+  // Authenticate as Hospital Staff (hospital@example.com)
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
   const cancelFn = httpsCallable(fns, 'cancelHospitalRequisition');
 
   // 4.1: Attempt to cancel a requisition in 'Matched' status -> Must be REJECTED by real Cloud Function

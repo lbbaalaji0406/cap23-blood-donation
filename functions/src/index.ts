@@ -32,20 +32,33 @@ export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
  * Sources:
  * 1. Drugs and Cosmetics Rules, 1945, Schedule F, Part XII-B (Apheresis statutory limits)
  * 2. National Standards for Blood Centres / DGHS Transfusion Medicine Technical Manual (MoHFW)
+ * 3. NBTC Standard B3.1 (90 days male / 120 days female) - See Decision Log ID-016
  */
 export const TRANSFUSION_CONFIG = {
   // Standalone inter-donation intervals (in days)
-  WHOLE_BLOOD_INTERVAL_DAYS: 90,     // Universal standard for Whole Blood (MoHFW)
-  PLATELET_INTERVAL_DAYS: 7,          // 7-day safe camp interval (statutory min is 48 hours)
-  PLASMA_INTERVAL_DAYS: 28,          // Standard plasma replenishment interval
+  WHOLE_BLOOD_INTERVAL_DAYS: 90,        // Universal baseline floor (MoHFW / Drugs & Cosmetics Rules)
+  WHOLE_BLOOD_FEMALE_INTERVAL_DAYS: 120, // NBTC Standard B3.1 statutory guideline for female donors (deferred in schema per ID-016)
+  PLATELET_INTERVAL_DAYS: 7,             // 7-day safe camp interval (statutory min is 48 hours)
+  PLASMA_INTERVAL_DAYS: 28,             // Standard plasma replenishment interval
 
   // Cross-component intervals (in days)
-  WB_TO_APHERESIS_DAYS: 28,          // Whole Blood -> Apheresis (DGHS Technical Manual)
-  APHERESIS_TO_WB_DAYS: 28,          // Apheresis -> Whole Blood (DGHS Technical Manual)
+  WB_TO_APHERESIS_DAYS: 28,             // Whole Blood -> Apheresis (DGHS Technical Manual)
+  APHERESIS_TO_WB_DAYS: 28,             // Apheresis -> Whole Blood (DGHS Technical Manual)
 
   // Apheresis statutory safety caps (Drugs & Cosmetics Rules, Schedule F, Part XII-B)
-  MAX_PLATELET_DONATIONS_7_DAYS: 2,   // Max 2 times in 7 days
-  MAX_PLATELET_DONATIONS_365_DAYS: 24 // Max 24 times in 365 days
+  MAX_PLATELET_DONATIONS_7_DAYS: 2,      // Max 2 times in 7 days
+  MAX_PLATELET_DONATIONS_365_DAYS: 24    // Max 24 times in 365 days
+};
+
+/**
+ * Match Response Timeout SLA (Decision Log ID-015)
+ * If a matched donor does not respond within this window, the match auto-times-out,
+ * releases the donor reservation lock, and automatically initiates replacement search.
+ */
+export const MATCH_TIMEOUT_CONFIG = {
+  Critical: 15 * 60 * 1000,    // 15 minutes for Critical requisitions
+  Urgent: 2 * 60 * 60 * 1000,   // 2 hours for Urgent requisitions
+  Routine: 24 * 60 * 60 * 1000  // 24 hours for Routine requisitions
 };
 
 export interface DonorEligibilityResult {
@@ -408,30 +421,17 @@ export const processWorkflowState = functions.https.onCall({ secrets: [emailjsSe
       throw new functions.https.HttpsError('invalid-argument', 'Valid response (accept or decline) is required.');
     }
 
-    let targetDonorUid: string;
-    let isCoordinatorOverride = false;
-
-    if (callerProfile.role === 'Donor') {
-      // Primary Path: Donor responds to their OWN match only
-      if (donorUid && donorUid !== auth.uid) {
-        throw new functions.https.HttpsError('permission-denied', 'Donors can only respond to their own matches.');
-      }
-      targetDonorUid = auth.uid;
-    } else if (callerProfile.role === 'Manager' || callerProfile.role === 'Admin') {
-      // Coordinator Override Path: Manager/Admin records donor's verbal/phone response
-      if (callerProfile.role === 'Manager' && callerProfile.campId !== campId) {
-        throw new functions.https.HttpsError('permission-denied', 'Manager does not have access to this camp.');
-      }
-      if (!donorUid) {
-        throw new functions.https.HttpsError('invalid-argument', 'Missing donorUid for coordinator match response.');
-      }
-      targetDonorUid = donorUid;
-      isCoordinatorOverride = true;
-    } else {
-      throw new functions.https.HttpsError('permission-denied', 'Only Donors or Camp Coordinators can respond to matches.');
+    // Strict Donor-Exclusive Consent Boundary (Decision ID-015):
+    // Only the authenticated matched donor can accept or decline. Managers/Admins cannot proxy or override consent.
+    if (callerProfile.role !== 'Donor') {
+      throw new functions.https.HttpsError('permission-denied', 'Only matched donors can respond to match requests.');
     }
 
-    return await handleRespondToMatch(campId, requestId, targetDonorUid, response, auth.uid, callerProfile.name || 'Unknown', isCoordinatorOverride);
+    if (donorUid && donorUid !== auth.uid) {
+      throw new functions.https.HttpsError('permission-denied', 'Donors can only respond to their own matches.');
+    }
+
+    return await handleRespondToMatch(campId, requestId, auth.uid, response, auth.uid, callerProfile.name || 'Unknown');
   } else if (action === 'UPDATE_STATUS') {
     if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId) {
       throw new functions.https.HttpsError('permission-denied', 'Only Camp Managers or Admins can update status.');
@@ -608,10 +608,15 @@ async function handleMatchDonor(campId: string, requestId: string, donorUid: str
   
 
   try {
+    const urgency = requestDetails.urgency || 'Routine';
+    const timeoutDurationMs = MATCH_TIMEOUT_CONFIG[urgency as keyof typeof MATCH_TIMEOUT_CONFIG] || MATCH_TIMEOUT_CONFIG.Routine;
+    const expiresAt = Date.now() + timeoutDurationMs;
+
     const updates: any = {};
     updates[`matches/${requestId}/${donorUid}`] = {
       status: 'pending_response',
       matchedAt: { '.sv': 'timestamp' },
+      expiresAt,
       respondedAt: null
     };
     updates[`transactions/donation_request/${campId}/${requestId}/status`] = 'Pending Response';
@@ -707,8 +712,7 @@ async function handleRespondToMatch(
   donorUid: string, 
   response: 'accept' | 'decline', 
   actorUid: string, 
-  actorName: string,
-  isCoordinatorOverride: boolean = false
+  actorName: string
 ) {
   const db = admin.database();
 
@@ -720,6 +724,9 @@ async function handleRespondToMatch(
   const matchData = matchSnap.val();
   if (matchData.status !== 'pending_response') {
     throw new functions.https.HttpsError('failed-precondition', 'Match is no longer pending response.');
+  }
+  if (matchData.expiresAt && matchData.expiresAt < Date.now()) {
+    throw new functions.https.HttpsError('deadline-exceeded', 'Match request has expired due to timeout. Please await rematching.');
   }
 
   const requestRef = db.ref(`transactions/donation_request/${campId}/${requestId}`);
@@ -763,9 +770,7 @@ async function handleRespondToMatch(
 
     await db.ref().update(matchAcceptUpdates);
 
-    const auditDetails = isCoordinatorOverride
-      ? `Coordinator Override: Response recorded by ${actorName} (${actorUid}) on behalf of donor ${donorUid}: Accepted (${newReqStatus})`
-      : `Donor Self-Response: Accepted (${newReqStatus})`;
+    const auditDetails = `Donor Self-Response: Accepted (${newReqStatus})`;
 
     await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', newReqStatus, auditDetails);
     return { success: true };
@@ -776,9 +781,7 @@ async function handleRespondToMatch(
     matchDeclineUpdates[`active_donor_matches/${donorUid}`] = null;
     await db.ref().update(matchDeclineUpdates);
 
-    const auditDetails = isCoordinatorOverride
-      ? `Coordinator Override: Response recorded by ${actorName} (${actorUid}) on behalf of donor ${donorUid}: Declined`
-      : 'Donor Self-Response: Declined';
+    const auditDetails = 'Donor Self-Response: Declined';
 
     await logAudit(requestId, actorUid, actorName, 'RESPOND_TO_MATCH', 'Success', null, 'Pending Response', 'Declined', auditDetails);
 
@@ -1172,4 +1175,157 @@ export const cancelHospitalRequisition = functions.https.onCall(async (request) 
 
   return { success: true };
 });
+
+/**
+ * Phase 5/6: Automated Match Timeout Monitor & Rematch Engine (Decision ID-015)
+ * Periodically or on-demand checks matches in 'pending_response'. If expiresAt has elapsed:
+ * 1. Auto-declines match ('timed_out')
+ * 2. Releases active_donor_matches lock
+ * 3. Logs distinct audit trail
+ * 4. Finds next eligible donor via cooldown engine and auto-matches replacement
+ * 5. If no donor found, alerts coordinator by flagging needsAdminAttention
+ */
+export async function processMatchTimeoutsInternal(specificRequestId?: string, campIdHint?: string) {
+  const db = admin.database();
+  const now = Date.now();
+  let timedOutCount = 0;
+  let rematchedCount = 0;
+
+  const expiredMatches: { requestId: string; donorUid: string }[] = [];
+
+  if (specificRequestId) {
+    const matchSnap = await db.ref(`matches/${specificRequestId}`).once('value');
+    if (matchSnap.exists()) {
+      matchSnap.forEach(child => {
+        const donorUid = child.key as string;
+        const data = child.val();
+        if (data.status === 'pending_response') {
+          const expiresAt = data.expiresAt || (data.matchedAt ? data.matchedAt + MATCH_TIMEOUT_CONFIG.Routine : 0);
+          if (expiresAt > 0 && expiresAt <= now) {
+            expiredMatches.push({ requestId: specificRequestId, donorUid });
+          }
+        }
+      });
+    }
+  } else {
+    const matchesSnap = await db.ref('matches').once('value');
+    if (matchesSnap.exists()) {
+      matchesSnap.forEach(reqSnap => {
+        const reqId = reqSnap.key as string;
+        reqSnap.forEach(child => {
+          const donorUid = child.key as string;
+          const data = child.val();
+          if (data.status === 'pending_response') {
+            const expiresAt = data.expiresAt || (data.matchedAt ? data.matchedAt + MATCH_TIMEOUT_CONFIG.Routine : 0);
+            if (expiresAt > 0 && expiresAt <= now) {
+              expiredMatches.push({ requestId: reqId, donorUid });
+            }
+          }
+        });
+      });
+    }
+  }
+
+  for (const item of expiredMatches) {
+    const { requestId, donorUid } = item;
+
+    // Locate campId and request
+    let campId = campIdHint;
+    let requestDetails: any = null;
+
+    if (campId) {
+      const snap = await db.ref(`transactions/donation_request/${campId}/${requestId}`).once('value');
+      if (snap.exists()) requestDetails = snap.val();
+    }
+
+    if (!requestDetails) {
+      const campsSnap = await db.ref('transactions/donation_request').once('value');
+      if (campsSnap.exists()) {
+        campsSnap.forEach(cSnap => {
+          if (cSnap.hasChild(requestId)) {
+            campId = cSnap.key as string;
+            requestDetails = cSnap.child(requestId).val();
+            return true;
+          }
+          return false;
+        });
+      }
+    }
+
+    if (!campId || !requestDetails) {
+      await db.ref(`matches/${requestId}/${donorUid}/status`).set('timed_out');
+      await db.ref(`active_donor_matches/${donorUid}`).remove();
+      timedOutCount++;
+      continue;
+    }
+
+    // 1. Mark timed_out and release lock
+    const timeoutUpdates: Record<string, any> = {};
+    timeoutUpdates[`matches/${requestId}/${donorUid}/status`] = 'timed_out';
+    timeoutUpdates[`matches/${requestId}/${donorUid}/timedOutAt`] = { '.sv': 'timestamp' };
+    timeoutUpdates[`active_donor_matches/${donorUid}`] = null;
+    await db.ref().update(timeoutUpdates);
+    timedOutCount++;
+
+    await logAudit(
+      requestId,
+      'SYSTEM',
+      'Timeout Monitor',
+      'MATCH_TIMEOUT',
+      'Success',
+      null,
+      'Pending Response',
+      'Timed Out',
+      `Match for donor ${donorUid} timed out (SLA elapsed). Reservation lock released.`
+    );
+
+    // 2. Automated Rematch Engine
+    const recipientBloodGroupId = requestDetails.blood_groupId;
+    const requestedComponent: BloodComponentType = requestDetails.componentType || 'WholeBlood';
+
+    const replacementDonor = await findNextEligibleDonor(campId, requestId, recipientBloodGroupId, requestedComponent);
+    if (replacementDonor) {
+      await handleMatchDonor(campId, requestId, replacementDonor, 'SYSTEM', 'Auto-Match System');
+      await logAudit(
+        requestId,
+        'SYSTEM',
+        'Auto-Match System',
+        'AUTO_MATCH',
+        'Success',
+        null,
+        undefined,
+        undefined,
+        `Auto-matched replacement donor ${replacementDonor} following donor ${donorUid} timeout`
+      );
+      rematchedCount++;
+    } else {
+      const flagUpdates: Record<string, any> = {};
+      flagUpdates[`transactions/donation_request/${campId}/${requestId}/needsAdminAttention`] = true;
+      if (requestDetails.recipientHospitalId) {
+        flagUpdates[`hospital_requests/${requestDetails.recipientHospitalId}/${requestId}/needsAdminAttention`] = true;
+      }
+      await db.ref().update(flagUpdates);
+
+      await logAudit(
+        requestId,
+        'SYSTEM',
+        'Auto-Match System',
+        'AUTO_MATCH',
+        'Failed',
+        'No eligible replacement donor available following timeout',
+        undefined,
+        undefined,
+        'Coordinator alert: needsAdminAttention flagged'
+      );
+    }
+  }
+
+  return { timedOutCount, rematchedCount };
+}
+
+export const processMatchTimeouts = functions.https.onCall(async (request) => {
+  const { requestId, campId } = request.data || {};
+  return await processMatchTimeoutsInternal(requestId, campId);
+});
+
 

@@ -193,3 +193,63 @@ Under Deviation **D-005**, all donation requests are strictly nested under `/tra
 5. **Safe Cancellation Lifecycle:**
    - Hospital staff can self-cancel a requisition via `cancelHospitalRequisition` only while the requisition remains in `Registered` status. Once `Verified` or `Matched`, cancellations must be coordinated with the camp desk to prevent disruption of active donors traveling for phlebotomy.
 
+---
+
+## ID-015: Donor-Exclusive Match Consent and Automated Timeout Rematch Architecture
+
+**Date:** 2026-09-29  
+**Status:** Approved  
+**Related Components:** `processWorkflowState`, `handleRespondToMatch`, `processMatchTimeouts`, `test-hospital-actor.mjs`
+
+**Context & Problem:**  
+When `RESPOND_TO_MATCH` was initially refactored to allow real Donors to accept or decline match requests, a "Coordinator Override" path was retained allowing Camp Managers or Admins to record responses on behalf of donors. 
+
+Upon architectural and security audit, this capability was recognized as a violation of core medical and consent boundaries:
+1. **Invasive Procedure Consent:** Donating whole blood or undergoing apheresis is an invasive medical procedure requiring direct, un-coerced bodily consent from the donor. Allowing coordinators to record acceptance on a donor's behalf creates a fictitious record of consent that the donor never provided.
+2. **False Operational Security:** If a coordinator clicks "Accept" without actual donor commitment, clinical teams at recipient hospitals believe units are secured, leading to treatment delays or cancellation of emergency contingencies.
+3. **Coercion & Metrics Pressure:** Coordinators facing fulfillment SLAs have an incentive to accept matches prematurely.
+
+**Decision:**
+1. **Total Elimination of Manager/Admin Proxy Consent:**
+   - Stripped Manager and Admin roles from `RESPOND_TO_MATCH` in `processWorkflowState`.
+   - Strictly enforced that `callerProfile.role === 'Donor'` AND `request.auth.uid === donorUid`. Only the matched donor can ever accept or decline their match.
+2. **Strict Non-Overwritable Match Status:**
+   - Any match not in `pending_response` is immutable. If a match is already `accepted` or `declined`, duplicate responses or state changes are strictly rejected with `failed-precondition: Match is no longer pending response`.
+3. **Automated Match Timeout & Rematch Engine:**
+   - Rather than relying on coordinators to handle offline or non-responsive donors, the system implements an SLA-driven automated timeout engine:
+     - **Critical requisitions:** 15 minutes response window (`MATCH_TIMEOUT_CONFIG.Critical`).
+     - **Urgent requisitions:** 2 hours response window (`MATCH_TIMEOUT_CONFIG.Urgent`).
+     - **Routine requisitions:** 24 hours response window (`MATCH_TIMEOUT_CONFIG.Routine`).
+   - Each match record computes `expiresAt = matchedAt + timeoutDurationMs`.
+   - `processMatchTimeouts`: An automated worker scans `pending_response` matches. When `expiresAt <= now`:
+     - Updates match status to `timed_out` with a timestamp.
+     - Atomically releases the reservation lock in `active_donor_matches/{donorUid}`.
+     - Logs audit trail: `AUTO_TIMEOUT`.
+     - Automatically scans for the next eligible donor via `findNextEligibleDonor` (evaluating full component cooldowns and ABO compatibility) and auto-matches a replacement donor.
+     - If no replacement is available, flags `needsAdminAttention: true` across camp and hospital queues and logs an alert.
+
+---
+
+## ID-016: Clinical Differentiation of Whole Blood Cooldowns by Biological Sex / Iron-Loss Physiology
+
+**Date:** 2026-09-29  
+**Status:** Deferred with Clinical Advisory  
+**Related Components:** `evaluateDonorEligibility`, `TRANSFUSION_CONFIG`, `DonorHistoryView.tsx`
+
+**Statutory & Medical Background:**
+1. **National Blood Transfusion Council (NBTC) & National AIDS Control Organisation (NACO):**
+   *Standards for Blood Banks & Blood Transfusion Services* (Ministry of Health & Family Welfare, Govt. of India), Standard B3.1 mandates:
+   - **Male Donors:** Minimum interval of **3 months (90 days)**.
+   - **Female Donors:** Minimum interval of **4 months (120 days)**.
+2. **Physiological Rationale:**
+   Donating 350–450 mL of whole blood removes ~200–250 mg of elemental iron. Menstruating females experience baseline periodic iron loss (10–20 mg per cycle) and generally possess lower baseline serum ferritin reserves. Nutritional iron replenishment in Indian demographics requires approximately 16 weeks (120 days) for females, compared to 8–12 weeks (90 days) for males. Shortening the female interval to 90 days induces cumulative subclinical iron deficiency and microcytic anemia.
+
+**Decision & Implementation Scope:**
+1. **Current Codebase State:**
+   - The current `users` schema does not store a sex/gender field. Unilaterally enforcing 120 days globally would unnecessarily disqualify eligible male donors, whereas using 90 days without differentiation under-protects female donors.
+   - The global baseline floor remains at **90 days** in `evaluateDonorEligibility` (`TRANSFUSION_CONFIG.WHOLE_BLOOD_INTERVAL_DAYS = 90`).
+2. **Clinical Intake Advisory:**
+   - Added a prominent statutory clinical advisory banner to `DonorHistoryView.tsx` advising female donors to observe the 120-day interval per NBTC Standard B3.1.
+3. **Mandatory Future Implementation Framing:**
+   - When user profile schemas are updated to incorporate this differentiation, the field **must** be framed as a **clinical / biological-sex question specific to donation eligibility** (e.g., *"sex assigned at birth"* or a direct menstruation-relevant clinical intake question), rather than a general gender-identity dropdown. The medical rationale is strictly biological iron-depletion physiology, not social identity.
+

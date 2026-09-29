@@ -120,6 +120,17 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
          </div>
       )}
 
+      {/* Statutory Clinical Notice Banner (Decision ID-016) */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 flex items-start gap-3">
+        <span className="text-base font-bold text-amber-600">ℹ️</span>
+        <div>
+          <span className="font-semibold text-amber-950">Statutory Clinical Notice (NBTC / MoHFW Standards):</span>
+          <p className="mt-1 text-amber-800 leading-relaxed">
+            National Blood Transfusion Council regulations mandate a minimum <strong>120-day (4-month)</strong> inter-donation interval for female donors to compensate for physiological menstrual iron expenditure, compared to <strong>90 days (3 months)</strong> for male donors. The system currently computes eligibility against the 90-day statutory baseline floor. Female donors should observe the 120-day interval prior to scheduling their next whole blood donation.
+          </p>
+        </div>
+      </div>
+
       {/* Component-Specific Eligibility Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Whole Blood Card */}
@@ -135,7 +146,7 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
               {isWbEligible ? 'Eligible to Donate Now' : `Eligible on ${new Date(nextWbTime).toLocaleDateString()}`}
             </h4>
             <p className="text-xs text-slate-600 mt-1">
-              90-day interval for whole blood; 28-day gap following apheresis (DGHS standard).
+              90-day statutory baseline (120 days for female donors per NBTC Standard B3.1); 28-day gap following apheresis.
             </p>
           </div>
           {!isWbEligible && (
