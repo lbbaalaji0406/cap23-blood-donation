@@ -1,10 +1,15 @@
 import { initializeApp as adminInit } from 'firebase-admin/app';
 import { getDatabase as adminDb } from 'firebase-admin/database';
-import { getAuth as adminAuth } from 'firebase-admin/auth';
+import { initializeApp } from 'firebase/app';
+import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
+import { getDatabase, connectDatabaseEmulator, ref, get } from 'firebase/database';
 import { readFileSync } from 'fs';
+import * as functionsModule from './functions/lib/index.js';
 
 console.log("=================================================");
 console.log("HOSPITAL ACTOR & DUAL-INDEX VERIFICATION TEST SUITE");
+console.log("(Real Cloud Functions Execution & Live Database Contract)");
 console.log("=================================================\n");
 
 let passed = 0;
@@ -20,11 +25,7 @@ function assert(condition, testName, detail = '') {
   }
 }
 
-// 1. Initialize Admin App (connecting to local or mock DB)
-process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
-process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
-
-// Verify rules syntax from database.rules.json
+// 1. Static Rules & Export Verification
 const rawRules = readFileSync('./database.rules.json', 'utf8');
 let parsedRules;
 try {
@@ -34,7 +35,6 @@ try {
   assert(false, 'database.rules.json is valid JSON', e.message);
 }
 
-// Verify rules structure
 const hospitalRules = parsedRules.rules?.hospital_requests;
 assert(hospitalRules !== undefined, 'rules.hospital_requests node exists');
 assert(hospitalRules?.$hospitalId?.[".write"] === "false", 'rules.hospital_requests.$hospitalId write is locked to false');
@@ -51,132 +51,233 @@ assert(
   'donation_request leaf node allows hospital to read only its own recipientHospitalId'
 );
 
-// 2. Verify Cloud Function logic & exports from functions/lib/index.js
-import * as functionsModule from './functions/lib/index.js';
+// Verify actual symbols exported from functions/lib/index.js
+assert(typeof functionsModule.submitHospitalRequisition === 'function', 'submitHospitalRequisition Cloud Function is exported from functions/lib');
+assert(typeof functionsModule.cancelHospitalRequisition === 'function', 'cancelHospitalRequisition Cloud Function is exported from functions/lib');
+assert(typeof functionsModule.createUserByAdmin === 'function', 'createUserByAdmin Cloud Function is exported from functions/lib');
+assert(typeof functionsModule.processWorkflowState === 'function', 'processWorkflowState Cloud Function is exported from functions/lib');
 
-assert(typeof functionsModule.submitHospitalRequisition === 'function', 'submitHospitalRequisition Cloud Function is exported');
-assert(typeof functionsModule.cancelHospitalRequisition === 'function', 'cancelHospitalRequisition Cloud Function is exported');
-assert(typeof functionsModule.createUserByAdmin === 'function', 'createUserByAdmin Cloud Function is exported');
+// 2. Setup Client App & Admin App for Live Verification
+process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
+process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 
-// 3. Test Dual-Index Payload Construction and Isolation Contract
-console.log("\n--- Dual-Index Data Contract Tests ---");
+const adminApp = adminInit({
+  projectId: "cap23-blood-donation",
+  databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation-default-rtdb"
+}, 'adminForHospitalTests_' + Date.now());
+const db = adminDb(adminApp);
 
-function constructRequisitionPayloads(callerHospitalId, input) {
-  const requestId = 'REQ_TEST_' + Date.now();
-  const timestamp = Date.now();
+const clientApp = initializeApp({
+  apiKey: "fake-api-key",
+  projectId: "cap23-blood-donation",
+  databaseURL: "http://127.0.0.1:9000/?ns=cap23-blood-donation-default-rtdb"
+}, 'clientForHospitalTests_' + Date.now());
+const auth = getAuth(clientApp);
+connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+const fns = getFunctions(clientApp);
+connectFunctionsEmulator(fns, '127.0.0.1', 5001);
+
+async function runLiveTests() {
+  console.log("\n--- 2. Real Cloud Function Execution: submitHospitalRequisition ---");
   
-  const requestPayload = {
-    requestId,
-    campId: input.campId,
-    recipientName: input.recipientName,
-    recipientHospitalId: callerHospitalId,
-    blood_groupId: input.blood_groupId,
-    componentType: input.componentType || 'WholeBlood',
-    unitsNeeded: input.unitsNeeded,
-    unitsSecured: 0,
-    urgency: input.urgency || 'Routine',
-    status: 'Registered',
-    notes: input.notes || '',
-    patientId: input.patientId || '',
-    createdBy: 'HOSP_USER_123',
-    createdByName: 'Dr. Ramesh',
-    createdAt: timestamp,
-    updatedAt: timestamp
+  // Authenticate as Hospital Staff
+  await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
+  const submitFn = httpsCallable(fns, 'submitHospitalRequisition');
+
+  const reqInput = {
+    campId: 'CAMP001',
+    recipientName: 'Ravi Kumar (Clinical Requisition)',
+    patientId: 'IP-8821',
+    blood_groupId: 'O_plus',
+    componentType: 'Platelets',
+    unitsNeeded: 2,
+    urgency: 'Critical',
+    notes: 'Dengue shock syndrome - urgent apheresis needed'
   };
 
-  const hospitalRequestPayload = {
-    requestId,
-    campId: input.campId,
-    recipientName: input.recipientName,
-    recipientHospitalId: callerHospitalId,
-    blood_groupId: input.blood_groupId,
-    componentType: input.componentType || 'WholeBlood',
-    unitsNeeded: input.unitsNeeded,
-    unitsSecured: 0,
-    urgency: input.urgency || 'Routine',
-    status: 'Registered',
-    notes: input.notes || '',
-    patientId: input.patientId || '',
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
+  const submitResult = await submitFn(reqInput);
+  const createdRequestId = submitResult.data.requestId;
+  assert(Boolean(createdRequestId), 'submitHospitalRequisition returns created requestId', `ID: ${createdRequestId}`);
 
-  return { requestId, requestPayload, hospitalRequestPayload };
+  // Inspect the actual database nodes created by the real Cloud Function
+  const campQueueSnap = await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get();
+  const hospQueueSnap = await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get();
+
+  assert(campQueueSnap.exists(), 'Camp queue record created in RTDB by real Cloud Function');
+  assert(hospQueueSnap.exists(), 'Hospital queue record created in RTDB by real Cloud Function');
+
+  const campData = campQueueSnap.val();
+  const hospData = hospQueueSnap.val();
+
+  assert(campData.recipientHospitalId === 'HOS001', 'Camp queue payload binds authenticated hospitalId HOS001');
+  assert(hospData.recipientHospitalId === 'HOS001', 'Hospital queue payload binds authenticated hospitalId HOS001');
+  assert(campData.status === 'Registered', 'Camp queue initial status is strictly Registered');
+  assert(hospData.status === 'Registered', 'Hospital queue initial status is strictly Registered');
+  assert(campData.unitsSecured === 0 && hospData.unitsSecured === 0, 'Initial unitsSecured is strictly 0 across both queues');
+  assert(campData.componentType === 'Platelets', 'Platelet component properly captured in camp queue');
+  assert(hospData.componentType === 'Platelets', 'Platelet component properly captured in hospital queue');
+  assert(campData.patientId === 'IP-8821' && hospData.patientId === 'IP-8821', 'Patient IP/Bed number preserved across both queues');
+
+  console.log("\n--- 3. Real Cloud Function Execution: processWorkflowState (Match Response Sync) ---");
+
+  // Seed two donor matches for this request
+  const donor1Uid = 'DONOR_LIVE_TEST_1';
+  const donor2Uid = 'DONOR_LIVE_TEST_2';
+
+  await db.ref(`matches/${createdRequestId}/${donor1Uid}`).set({
+    donorUid: donor1Uid,
+    status: 'pending_response',
+    matchedAt: Date.now()
+  });
+  await db.ref(`matches/${createdRequestId}/${donor2Uid}`).set({
+    donorUid: donor2Uid,
+    status: 'pending_response',
+    matchedAt: Date.now()
+  });
+
+  // Switch authentication to Camp Manager (CAMP001)
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'manager@example.com', 'password123');
+  const workflowFn = httpsCallable(fns, 'processWorkflowState');
+
+  // Donor 1 accepts -> Call real Cloud Function
+  await workflowFn({
+    action: 'RESPOND_TO_MATCH',
+    campId: 'CAMP001',
+    requestId: createdRequestId,
+    donorUid: donor1Uid,
+    response: 'accept'
+  });
+
+  // Read live database state
+  const campSnapAfter1 = (await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get()).val();
+  const hospSnapAfter1 = (await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get()).val();
+
+  assert(campSnapAfter1.unitsSecured === 1, 'Camp queue unitsSecured incremented to 1');
+  assert(hospSnapAfter1.unitsSecured === 1, 'Hospital queue unitsSecured synchronized to 1');
+  assert(campSnapAfter1.status === 'Partially Matched', 'Camp queue status transitioned to Partially Matched');
+  assert(hospSnapAfter1.status === 'Partially Matched', 'Hospital queue status synchronized to Partially Matched');
+
+  // Donor 2 accepts -> Call real Cloud Function
+  await workflowFn({
+    action: 'RESPOND_TO_MATCH',
+    campId: 'CAMP001',
+    requestId: createdRequestId,
+    donorUid: donor2Uid,
+    response: 'accept'
+  });
+
+  const campSnapAfter2 = (await db.ref(`transactions/donation_request/CAMP001/${createdRequestId}`).get()).val();
+  const hospSnapAfter2 = (await db.ref(`hospital_requests/HOS001/${createdRequestId}`).get()).val();
+
+  assert(campSnapAfter2.unitsSecured === 2, 'Camp queue unitsSecured reached 2 (target met)');
+  assert(hospSnapAfter2.unitsSecured === 2, 'Hospital queue unitsSecured synchronized to 2');
+  assert(campSnapAfter2.status === 'Matched', 'Camp queue status transitioned to Matched');
+  assert(hospSnapAfter2.status === 'Matched', 'Hospital queue status synchronized to Matched');
+
+  console.log("\n--- 4. Real Cloud Function Execution: cancelHospitalRequisition (Authorization & Constraints) ---");
+
+  // Switch back to Hospital Staff
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
+  const cancelFn = httpsCallable(fns, 'cancelHospitalRequisition');
+
+  // 4.1: Attempt to cancel a requisition in 'Matched' status -> Must be REJECTED by real Cloud Function
+  try {
+    await cancelFn({
+      campId: 'CAMP001',
+      requestId: createdRequestId,
+      reason: 'Patient improved'
+    });
+    assert(false, 'cancelHospitalRequisition on Matched request should have failed', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isPreconditionFailed = err.message.includes('failed-precondition') || err.message.includes('Cannot cancel requisition');
+    assert(
+      isPreconditionFailed,
+      'Real Cloud Function REJECTS cancellation of Matched requisition',
+      `Error received: ${err.message}`
+    );
+  }
+
+  // 4.2: Create a second Hospital user belonging to HOS002 to test cross-hospital cancellation
+  const rivalHospitalUid = 'RIVAL_HOSPITAL_USER_UID';
+  await db.ref(`users/${rivalHospitalUid}`).set({
+    email: 'rival@apollo.org',
+    name: 'Dr. Rival',
+    role: 'Hospital',
+    hospitalId: 'HOS002',
+    accountStatus: 'active'
+  });
+
+  // Submit a fresh 'Registered' requisition to test legal cancellation and cross-cancellation
+  const req2Result = await submitFn({
+    campId: 'CAMP001',
+    recipientName: 'Anita Roy',
+    patientId: 'IP-9002',
+    blood_groupId: 'A_plus',
+    componentType: 'WholeBlood',
+    unitsNeeded: 1,
+    urgency: 'Routine',
+    notes: 'Pre-surgery reserve'
+  });
+  const req2Id = req2Result.data.requestId;
+
+  // 4.3: Cross-hospital cancellation attempt
+  // Create rival auth account in emulator if not existing
+  const { getAuth: adminGetAuth } = await import('firebase-admin/auth');
+  const authAdmin = adminGetAuth(adminApp);
+  try {
+    await authAdmin.createUser({ uid: rivalHospitalUid, email: 'rival@apollo.org', password: 'password123' });
+  } catch (e) {
+    // Already created
+  }
+
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'rival@apollo.org', 'password123');
+
+  try {
+    await cancelFn({
+      campId: 'CAMP001',
+      requestId: req2Id,
+      reason: 'Malicious cancellation by rival hospital'
+    });
+    assert(false, 'Cross-hospital cancellation should have been REJECTED', 'Unexpectedly succeeded!');
+  } catch (err) {
+    const isPermissionDenied = err.message.includes('permission-denied') || err.message.includes('permission to cancel');
+    assert(
+      isPermissionDenied,
+      'Real Cloud Function REJECTS cross-hospital cancellation (HOS002 cannot cancel HOS001 requisition)',
+      `Error received: ${err.message}`
+    );
+  }
+
+  // 4.4: Legitimate cancellation by owning hospital
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'hospital@example.com', 'password123');
+
+  const cancelResult = await cancelFn({
+    campId: 'CAMP001',
+    requestId: req2Id,
+    reason: 'Patient surgery rescheduled'
+  });
+  assert(cancelResult.data.success === true, 'cancelHospitalRequisition succeeded for owning hospital in Registered status');
+
+  const req2CampSnap = (await db.ref(`transactions/donation_request/CAMP001/${req2Id}`).get()).val();
+  const req2HospSnap = (await db.ref(`hospital_requests/HOS001/${req2Id}`).get()).val();
+
+  assert(req2CampSnap.status === 'Closed', 'Camp queue status updated to Closed by real Cloud Function');
+  assert(req2HospSnap.status === 'Closed', 'Hospital queue status updated to Closed by real Cloud Function');
+  assert(req2CampSnap.cancellationReason === 'Patient surgery rescheduled', 'Camp queue contains real cancellationReason');
+  assert(req2HospSnap.cancellationReason === 'Patient surgery rescheduled', 'Hospital queue contains real cancellationReason');
+
+  console.log("\n=================================================");
+  console.log(`REAL INTEGRATION TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
+  console.log("=================================================");
+
+  process.exit(failed > 0 ? 1 : 0);
 }
 
-const { requestId, requestPayload, hospitalRequestPayload } = constructRequisitionPayloads('HOS001', {
-  campId: 'CAMP001',
-  recipientName: 'Ravi Kumar',
-  patientId: 'IP-1234',
-  blood_groupId: 'O_plus',
-  componentType: 'Platelets',
-  unitsNeeded: 2,
-  urgency: 'Critical',
-  notes: 'Dengue shock syndrome'
-});
-
-assert(requestPayload.recipientHospitalId === 'HOS001', 'Camp queue payload binds authenticated hospitalId');
-assert(hospitalRequestPayload.recipientHospitalId === 'HOS001', 'Hospital queue payload binds authenticated hospitalId');
-assert(requestPayload.status === 'Registered', 'Initial state is strictly Registered');
-assert(requestPayload.unitsSecured === 0, 'Initial unitsSecured is 0');
-assert(requestPayload.componentType === 'Platelets', 'Platelet component properly captured');
-assert(requestPayload.patientId === 'IP-1234', 'Patient case/IP number preserved');
-
-// 4. Test State Transition & Synchronization Contract
-console.log("\n--- Real-Time Synchronization Contract Tests ---");
-
-function simulateMatchAcceptSync(hospitalRequest, unitsAccepted) {
-  const newUnitsSecured = (hospitalRequest.unitsSecured || 0) + unitsAccepted;
-  let newStatus = 'Partially Matched';
-  if (newUnitsSecured >= hospitalRequest.unitsNeeded) {
-    newStatus = 'Matched';
-  }
-  return {
-    ...hospitalRequest,
-    unitsSecured: newUnitsSecured,
-    status: newStatus,
-    updatedAt: Date.now()
-  };
-}
-
-// Donor 1 accepts
-const step1 = simulateMatchAcceptSync(hospitalRequestPayload, 1);
-assert(step1.unitsSecured === 1, 'Units secured increments to 1 after donor 1 accepts');
-assert(step1.status === 'Partially Matched', 'Status transitions to Partially Matched (1/2 units)');
-
-// Donor 2 accepts
-const step2 = simulateMatchAcceptSync(step1, 1);
-assert(step2.unitsSecured === 2, 'Units secured increments to 2 after donor 2 accepts');
-assert(step2.status === 'Matched', 'Status transitions to Matched once unitsNeeded reached (2/2 units)');
-
-// 5. Test Cancellation Rules
-console.log("\n--- Cancellation Authorization Rules ---");
-
-function evaluateCancellationEligibility(status, callerHospitalId, reqHospitalId) {
-  if (callerHospitalId !== reqHospitalId) {
-    return { allowed: false, reason: 'Cross-hospital cancellation forbidden' };
-  }
-  if (status !== 'Registered') {
-    return { allowed: false, reason: `Cannot cancel requisition in '${status}' state directly. Please contact the camp coordinator.` };
-  }
-  return { allowed: true };
-}
-
-const cancelReg = evaluateCancellationEligibility('Registered', 'HOS001', 'HOS001');
-assert(cancelReg.allowed, 'Hospital can cancel its own requisition while in Registered status');
-
-const cancelMatched = evaluateCancellationEligibility('Matched', 'HOS001', 'HOS001');
-assert(!cancelMatched.allowed && cancelMatched.reason.includes('contact the camp coordinator'), 'Hospital CANNOT cancel requisition in Matched status');
-
-const cancelCross = evaluateCancellationEligibility('Registered', 'HOS002', 'HOS001');
-assert(!cancelCross.allowed && cancelCross.reason.includes('Cross-hospital'), 'Hospital HOS002 CANNOT cancel requisition belonging to HOS001');
-
-console.log("\n=================================================");
-console.log(`TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
-console.log("=================================================");
-
-if (failed > 0) {
+runLiveTests().catch(err => {
+  console.error("Test execution encountered an error:", err);
   process.exit(1);
-} else {
-  process.exit(0);
-}
+});
