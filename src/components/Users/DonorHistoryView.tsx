@@ -146,7 +146,7 @@ export const DonorHistoryView = ({ targetDonorUid }: { targetDonorUid?: string }
               {isWbEligible ? 'Eligible to Donate Now' : `Eligible on ${new Date(nextWbTime).toLocaleDateString()}`}
             </h4>
             <p className="text-xs text-slate-600 mt-1">
-              90-day statutory baseline (120 days for female donors per NBTC Standard B3.1); 28-day gap following apheresis.
+              90-day statutory baseline (120 days for female donors per NBTC guidelines); 28-day gap following apheresis.
             </p>
           </div>
           {!isWbEligible && (

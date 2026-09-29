@@ -32,12 +32,12 @@ export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
  * Sources:
  * 1. Drugs and Cosmetics Rules, 1945, Schedule F, Part XII-B (Apheresis statutory limits)
  * 2. National Standards for Blood Centres / DGHS Transfusion Medicine Technical Manual (MoHFW)
- * 3. NBTC Standard B3.1 (90 days male / 120 days female) - See Decision Log ID-016
+ * 3. NBTC Guidelines (90 days male / 120 days female) - See Decision Log ID-016
  */
 export const TRANSFUSION_CONFIG = {
   // Standalone inter-donation intervals (in days)
   WHOLE_BLOOD_INTERVAL_DAYS: 90,        // Universal baseline floor (MoHFW / Drugs & Cosmetics Rules)
-  WHOLE_BLOOD_FEMALE_INTERVAL_DAYS: 120, // NBTC Standard B3.1 statutory guideline for female donors (deferred in schema per ID-016)
+  WHOLE_BLOOD_FEMALE_INTERVAL_DAYS: 120, // NBTC guideline for female donors (deferred in schema per ID-016)
   PLATELET_INTERVAL_DAYS: 7,             // 7-day safe camp interval (statutory min is 48 hours)
   PLASMA_INTERVAL_DAYS: 28,             // Standard plasma replenishment interval
 

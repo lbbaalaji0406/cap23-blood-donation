@@ -253,3 +253,6 @@ Upon architectural and security audit, this capability was recognized as a viola
 3. **Mandatory Future Implementation Framing:**
    - When user profile schemas are updated to incorporate this differentiation, the field **must** be framed as a **clinical / biological-sex question specific to donation eligibility** (e.g., *"sex assigned at birth"* or a direct menstruation-relevant clinical intake question), rather than a general gender-identity dropdown. The medical rationale is strictly biological iron-depletion physiology, not social identity.
 
+> [!NOTE] Regulatory Citation Caveat
+> While the underlying 90-day (male) and 120-day (female) donation intervals and their physiological iron-replenishment rationale are widely documented across Indian clinical guidelines, the specific section identifier "Standard B3.1" is an unverified citation label and should be independently validated against official MoHFW / CDSCO Gazette publications before treating it as a formal legal citation.
+

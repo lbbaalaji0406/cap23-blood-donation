@@ -291,6 +291,79 @@ async function runLiveTests() {
   assert(Boolean(autoTimeoutLog), 'Audit log distinctly records MATCH_TIMEOUT event');
   assert(Boolean(autoMatchLog), 'Audit log distinctly records AUTO_MATCH replacement event');
 
+  // 3.7b Dead-End Case: Match Timeout with NO Eligible Replacement Donor Available
+  const deadEndReqId = 'REQ_DEAD_END_' + Date.now();
+  await db.ref(`transactions/donation_request/CAMP001/${deadEndReqId}`).set({
+    campId: 'CAMP001',
+    recipientHospitalId: 'HOS001',
+    recipientName: 'Vikram Joshi (Dead-End Test)',
+    blood_groupId: 'AB_minus',
+    componentType: 'WholeBlood',
+    unitsNeeded: 1,
+    unitsSecured: 0,
+    urgency: 'Critical',
+    status: 'Pending Response',
+    createdAt: Date.now()
+  });
+  await db.ref(`hospital_requests/HOS001/${deadEndReqId}`).set({
+    campId: 'CAMP001',
+    recipientHospitalId: 'HOS001',
+    recipientName: 'Vikram Joshi (Dead-End Test)',
+    blood_groupId: 'AB_minus',
+    componentType: 'WholeBlood',
+    unitsNeeded: 1,
+    unitsSecured: 0,
+    urgency: 'Critical',
+    status: 'Pending Response',
+    createdAt: Date.now()
+  });
+
+  const solitaryDonorUid = 'SOLITARY_DONOR_' + Date.now();
+  await db.ref(`users/${solitaryDonorUid}`).set({
+    name: 'Solitary AB- Donor',
+    email: `solitary_${Date.now()}@example.com`,
+    role: 'Donor',
+    bloodGroup: 'AB_minus',
+    accountStatus: 'active'
+  });
+  await db.ref(`matches/${deadEndReqId}/${solitaryDonorUid}`).set({
+    donorUid: solitaryDonorUid,
+    status: 'pending_response',
+    matchedAt: Date.now() - 3600000,
+    expiresAt: Date.now() - 1000 // Expired
+  });
+  await db.ref(`active_donor_matches/${solitaryDonorUid}`).set({
+    requestId: deadEndReqId,
+    campId: 'CAMP001',
+    matchedAt: Date.now() - 3600000
+  });
+
+  // Execute timeout processor for this dead-end request
+  const deadEndTimeoutResult = await timeoutFn({ requestId: deadEndReqId, campId: 'CAMP001' });
+
+  assert(deadEndTimeoutResult.data.timedOutCount === 1, 'Dead-end match successfully detected as timed out');
+  assert(deadEndTimeoutResult.data.rematchedCount === 0, 'Zero replacements found when donor pool is exhausted');
+
+  // Verify RTDB state across both queues
+  const deadEndCampSnap = (await db.ref(`transactions/donation_request/CAMP001/${deadEndReqId}`).get()).val();
+  const deadEndHospSnap = (await db.ref(`hospital_requests/HOS001/${deadEndReqId}`).get()).val();
+  const solitaryLockSnap = await db.ref(`active_donor_matches/${solitaryDonorUid}`).get();
+
+  assert(!solitaryLockSnap.exists(), 'Dead-end timed-out donor lock released in active_donor_matches');
+  assert(deadEndCampSnap.needsAdminAttention === true, 'Dead-end: Camp queue record correctly flags needsAdminAttention: true');
+  assert(deadEndHospSnap.needsAdminAttention === true, 'Dead-end: Hospital queue record synchronized with needsAdminAttention: true');
+
+  // Verify audit log for the failed auto-match and coordinator alert
+  const deadEndAuditsSnap = await db.ref(`audit_logs/donation_requests/${deadEndReqId}`).get();
+  const deadEndAudits = Object.values(deadEndAuditsSnap.val() || {});
+  const failedAutoMatchLog = deadEndAudits.find(a => a.action === 'AUTO_MATCH' && a.status === 'Failed');
+  assert(Boolean(failedAutoMatchLog), 'Audit log distinctly records AUTO_MATCH failure when replacement pool exhausted');
+  assert(
+    failedAutoMatchLog?.details?.includes('needsAdminAttention') || failedAutoMatchLog?.failureReason?.includes('No eligible replacement donor'),
+    'Audit log explicitly records coordinator alert for needsAdminAttention',
+    failedAutoMatchLog?.details
+  );
+
   // 3.8 Complete Fulfillment with Replacement Donor
   // Provision auth account for replacement donor and have them accept their match
   let replacementAuthUser;
