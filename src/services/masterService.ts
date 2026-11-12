@@ -15,8 +15,44 @@ export const bloodGroupCodes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'
 // Generate ID from code safely (e.g. A+ -> A_plus)
 export const sanitizeId = (code: string) => code.replace('+', '_plus').replace('-', '_minus');
 
-export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[] => {
-  // Returns the list of donor blood group IDs that are compatible with the recipient
+export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
+
+export const getCompatibleDonorGroups = (
+  recipientBloodGroupId: string,
+  componentType: BloodComponentType = 'WholeBlood'
+): string[] => {
+  // Transfusion Medicine Compatibility Matrix:
+  // 1. Fresh Frozen Plasma (FFP): Acellular fluid devoid of intact red blood cells.
+  //    - Rh(D) is clinically irrelevant because anti-D is not naturally present in plasma and Rh antigens reside strictly on RBC membranes.
+  //    - ABO compatibility is the EXACT INVERSE of RBC compatibility:
+  //      * AB is universal plasma donor (plasma has no anti-A or anti-B antibodies).
+  //      * O is universal plasma recipient (O red cells have no A or B antigens to be attacked by donor antibodies).
+  if (componentType === 'Plasma') {
+    switch (recipientBloodGroupId) {
+      case 'O_plus':
+      case 'O_minus':
+        // Universal recipient for plasma: can receive plasma from ANY blood group
+        return ['O_plus', 'O_minus', 'A_plus', 'A_minus', 'B_plus', 'B_minus', 'AB_plus', 'AB_minus'];
+      case 'A_plus':
+      case 'A_minus':
+        // Safe with A or AB plasma (neither contains anti-A)
+        return ['A_plus', 'A_minus', 'AB_plus', 'AB_minus'];
+      case 'B_plus':
+      case 'B_minus':
+        // Safe with B or AB plasma (neither contains anti-B)
+        return ['B_plus', 'B_minus', 'AB_plus', 'AB_minus'];
+      case 'AB_plus':
+      case 'AB_minus':
+        // Recipient red cells express both A and B antigens; can ONLY receive AB plasma (no isohemagglutinins)
+        return ['AB_plus', 'AB_minus'];
+      default:
+        return [];
+    }
+  }
+
+  // 2. Whole Blood & Red Blood Cells (and baseline Platelets):
+  //    - Enforces strict ABO and Rh(D) antigen-antibody compatibility.
+  //    - O- is universal RBC donor; AB+ is universal RBC recipient.
   switch (recipientBloodGroupId) {
     case 'A_plus': return ['A_plus', 'A_minus', 'O_plus', 'O_minus'];
     case 'A_minus': return ['A_minus', 'O_minus'];

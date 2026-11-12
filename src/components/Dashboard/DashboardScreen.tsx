@@ -4,10 +4,11 @@ import { Activity, Clock, Calendar, CheckCircle2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { requestService, type DonationRequest } from '../../services/requestService';
 import { DonorHistoryView } from '../Users/DonorHistoryView';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, get } from 'firebase/database';
 import { db } from '../../firebase';
 import { Link } from 'react-router-dom';
 import { HospitalDashboard } from '../Hospital/HospitalDashboard';
+import { workflowService } from '../../services/workflowService';
 
 export const DashboardScreen = () => {
   const { profile, user } = useAuth();
@@ -16,7 +17,11 @@ export const DashboardScreen = () => {
   const [requests, setRequests] = useState<DonationRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCamp, setSelectedCamp] = useState<string>('all');
-  const [activeMatch, setActiveMatch] = useState<{campId: string, requestId: string} | null>(null);
+  const [activeMatch, setActiveMatch] = useState<{campId: string, requestId: string, expiresAt?: number} | null>(null);
+  const [matchDetails, setMatchDetails] = useState<any>(null);
+  const [responding, setResponding] = useState(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
+  const [responseSuccess, setResponseSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDashboardRequests = async () => {
@@ -50,6 +55,36 @@ export const DashboardScreen = () => {
       return () => unsubscribe();
     }
   }, [profile, user]);
+
+  useEffect(() => {
+    if (activeMatch?.campId && activeMatch?.requestId) {
+      const reqRef = ref(db, `transactions/donation_request/${activeMatch.campId}/${activeMatch.requestId}`);
+      get(reqRef).then(snap => {
+        if (snap.exists()) setMatchDetails(snap.val());
+      }).catch(err => console.error("Error fetching match request details:", err));
+    } else {
+      setMatchDetails(null);
+    }
+  }, [activeMatch]);
+
+  const handleRespond = async (response: 'accept' | 'decline') => {
+    if (!activeMatch || !user?.uid) return;
+    setResponding(true);
+    setResponseError(null);
+    setResponseSuccess(null);
+    try {
+      await workflowService.respondToMatch(activeMatch.campId, activeMatch.requestId, user.uid, response);
+      if (response === 'accept') {
+        setResponseSuccess("Thank you! You have accepted this donation match. Please report to the camp or coordinate with staff.");
+      } else {
+        setResponseSuccess("You have declined this match. Your match reservation has been released.");
+      }
+    } catch (err: any) {
+      setResponseError(err.message || `Failed to ${response} match.`);
+    } finally {
+      setResponding(false);
+    }
+  };
 
   if (profile?.role === 'Hospital') {
     return <HospitalDashboard />;
@@ -90,22 +125,87 @@ export const DashboardScreen = () => {
         )}
 
         {activeMatch && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-indigo-100 p-3 rounded-full text-indigo-600">
-                <Activity size={24} />
+          <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/70 dark:from-indigo-950/40 dark:to-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-6 shadow-sm">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-4 border-b border-indigo-200/60 dark:border-indigo-800/60">
+              <div className="flex items-center gap-3.5">
+                <div className="bg-indigo-600 p-3 rounded-xl text-white shadow-xs">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-bold text-indigo-950 dark:text-indigo-200">Active Match Request</h3>
+                    <span className="px-2.5 py-0.5 text-xs font-semibold uppercase bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-full border border-amber-200 dark:border-amber-800">
+                      Response Required
+                    </span>
+                  </div>
+                  <p className="text-indigo-800 dark:text-indigo-300 text-sm mt-0.5">
+                    A patient at <span className="font-semibold">{matchDetails?.recipientHospitalId || 'Hospital'}</span> urgently needs your <span className="font-semibold">{matchDetails?.blood_groupId || profile.bloodGroup}</span> donation.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-indigo-900">You have an Active Match!</h3>
-                <p className="text-indigo-700 text-sm">A patient currently needs your specific blood type.</p>
-              </div>
+              <Link 
+                to={`/requests/${activeMatch.campId}/${activeMatch.requestId}`}
+                className="text-xs font-semibold text-indigo-700 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-200 underline flex items-center gap-1"
+              >
+                View Full Details &rarr;
+              </Link>
             </div>
-            <Link 
-              to={`/requests/${activeMatch.campId}/${activeMatch.requestId}`}
-              className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors whitespace-nowrap"
-            >
-              View Request Details
-            </Link>
+
+            {matchDetails && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 text-xs">
+                <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-800/60">
+                  <span className="text-slate-500 dark:text-slate-400 block uppercase font-medium">Patient</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{matchDetails.recipientName || 'Clinical Patient'}</span>
+                </div>
+                <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-800/60">
+                  <span className="text-slate-500 dark:text-slate-400 block uppercase font-medium">Component</span>
+                  <span className="font-bold text-indigo-700 dark:text-indigo-400">{matchDetails.componentType || 'Whole Blood'}</span>
+                </div>
+                <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-800/60">
+                  <span className="text-slate-500 dark:text-slate-400 block uppercase font-medium">Camp</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{matchDetails.campId}</span>
+                </div>
+                <div className="bg-white/80 dark:bg-slate-900/80 p-2.5 rounded-lg border border-indigo-100 dark:border-indigo-800/60">
+                  <span className="text-slate-500 dark:text-slate-400 block uppercase font-medium">Urgency</span>
+                  <span className={`font-bold ${matchDetails.urgency === 'Critical' ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                    {matchDetails.urgency || 'Routine'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {responseError && (
+              <div className="my-3 p-3 bg-red-100 dark:bg-red-950/60 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 rounded-lg text-xs font-medium">
+                {responseError}
+              </div>
+            )}
+
+            {responseSuccess ? (
+              <div className="mt-3 p-4 bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 rounded-xl text-sm font-medium flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-700 dark:text-emerald-400 shrink-0" />
+                <span>{responseSuccess}</span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => handleRespond('accept')}
+                  disabled={responding}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl text-sm shadow-sm transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  <CheckCircle2 size={16} />
+                  {responding ? 'Confirming...' : 'Accept & Confirm Donation'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRespond('decline')}
+                  disabled={responding}
+                  className="px-5 py-2.5 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800 font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {responding ? 'Processing...' : 'Decline'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 

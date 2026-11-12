@@ -1,82 +1,80 @@
 # FDD — Functional Design Document
-## CAP-23 · Blood Donation Management
+## CAP-23 · Extended Blood Donation & Transfusion Ecosystem (M1–M6)
 
-**Domain:** Healthcare
-**Status:** v1.1 — Locked, incorporates D-001 and D-002
-**Last updated:** 2026-07-08
+**Domain:** Healthcare / Transfusion Medicine  
+**Status:** v2.0 — Production-Hardened Baseline (Milestones 1–6 Complete)  
+**Regulatory Baseline:** Drugs and Cosmetics Rules 1945 (Schedule F Part XII-B), DGHS/NBTC Standards, DPDP Act 2023, Motor Vehicles Act Sec 184  
+**Last updated:** 2026-11-12  
 
 ---
 
-## 1 · Business Problem
-Match donors to recipients with verification and donation history.
+## 1 · Business Problem & Scope
+Connect clinical blood requisitions with certified inventory and voluntary donors across hospital networks and mobile donation drives. Prevent stock spoilage via First-Expiry-First-Out (FEFO) allocation, prevent over-allocation through atomic locks, ensure compliance with maker-checker safety gates, and strictly isolate patient and donor PII.
 
-## 2 · Actors
+---
 
-- **Donor** — Registers self, views own donation history and current request status (read-only), adds comments/attachments to their own records only. Cannot see other donors' data.
-- **Camp Coordinator** — Registers/verifies/matches donors, progresses requests through the workflow, scoped strictly to their own assigned camp (see §3 and D-002). Cannot manage users, masters, or close/mark-unfulfillable requests.
-- **Admin** — Full system owner. Manages masters, users (including assigning each Coordinator's camp), has sole authority to move a request to `Closed` or `Unfulfilled`, sees all camps, generates system-wide reports.
+## 2 · System Actors & Role-Based Access Control (RBAC)
 
-**Recipient** is *not* a login-bearing actor. Recipient identity (name, blood group needed, hospital) is captured as data fields on the Donation Request. (Locked decision — see conversation log.)
-
-## 3 · Universal Roles (RBAC)
-
-| Role | Maps to | Scope | Key permissions |
+| Role | Domain Title | Key Responsibilities | Access Scope & Security Constraints |
 |---|---|---|---|
-| **Admin** | Admin | System-wide, all camps | Full CRUD on masters, users, all transactions; sole authority on Closed/Unfulfilled; assigns `campId` to Manager accounts at creation |
-| **Manager** | Camp Coordinator | **Own camp only** (D-002) | Create/verify/match/mark-donated on requests where `request.campId == own.campId`; read-only on masters; cannot set status to Closed or Unfulfilled |
-| **User** | Donor | Own records only | Create own profile, view own request status + history, comment/attach on own records; no access to other donors' data |
+| **Admin** | System Administrator | Masters CRUD, user management, audit review, system config, terminal state transitions (`Closed`, `Unfulfilled`). | Global system-wide read/write across all camps, hospitals, and units. |
+| **Manager / CampCoordinator** | Camp Coordinator | Camp operations, donor recruitment, mobile drive batch manifests, donor verification, matching. | Strictly scoped to assigned `campId` (D-002). Cannot access unassigned camps or direct inventory writes. |
+| **Storage** | Blood Storage Officer / Tech | Physical intake, Maker-Checker TTI certification, dispatch scanning, reconciliation, batch manifest receipt. | Access to `/inventory`, `/inventory_donor_ledger`, and `/transfer_manifests`. Cannot certify own intaked units. |
+| **Hospital** | Hospital Staff / Medical Officer | Blood requisition submission, emergency status tracking, SOS appeal authorization (MO only). | Scoped strictly to linked `hospitalId` (AC-SEC-01). Zero visibility into unassigned patient data or donor PII. |
+| **User / Donor** | Voluntary Blood Donor | Self-registration, medical history questionnaire, urgent slot claim, donation impact tracker. | Scoped strictly to self UID (`/users/{uid}`, `/donor_history/{uid}`, `/donor_transfusion_impacts/{uid}`). |
 
-**D-002 enforcement note:** Manager accounts must have `campId` set as a **required** field at creation — Admin's user-creation form must not allow saving a Manager with no camp assigned.
+---
 
-## 4 · Screens (per v6 manual §6)
+## 3 · Core Functional Modules (Milestones 1 – 6)
 
-1. Login / Signup
-2. Dashboard (role-scoped: Admin sees all camps, Manager sees own camp only)
-3. Masters List (Blood Group, Camp, Hospital) — Admin full CRUD, Manager read-only
-4. Masters Create / Edit — Admin only
-5. Donation Request List — filtered by campId for Manager, unfiltered for Admin
-6. Donation Request Create / Edit
-7. Donation Request Detail (status timeline + comments + attachments + audit tab)
-8. Reports (Summary / Status / Activity — camp-scoped for Manager, system-wide for Admin)
-9. Users — Admin only; includes campId assignment field for Manager accounts
-10. Roles — Admin only
-11. Settings — Admin only
+### Milestone 1: Physical Bag Verification & Maker-Checker Safety Gate
+- **Physical Bag Intake:** Lab technician intakes collected units into `Quarantined` status via `intakeStorageUnit`.
+- **Maker-Checker Verification (DEC-005):** Units can only be moved to active `Certified` status by a distinct Storage Officer (`enteredBy !== certifiedBy`).
+- **30-Minute Cold-Chain Return Rule:** Blood returned within 30 minutes with cold chain intact can be returned to active inventory; bags exceeding 30 minutes are safely discarded.
+- **Medical Cooldown Engine:** Enforces DGHS component-specific intervals (90 days for Whole Blood, 28 days for Platelets/Plasma reciprocal, inter-donation caps).
 
-## 5 · Workflow (includes D-001)
+### Milestone 2: Atomic FEFO Inventory Allocation & Ghost Inventory Guard
+- **Mode A (Certified Inventory):** Requisitions atomically reserve physical units using First-Expiry-First-Out (`inventory/fefo/{group}_{component}`).
+- **Mode B (Live Donor Dispatch):** Fallback mechanism automatically triggers targeted donor dispatch when chiller inventory is depleted.
+- **Ghost Inventory Protection:** If reserved units are not physically scanned within the 10-minute dispatch window, a watchdog sweep locks them into `ISSUE_UNCONFIRMED` to prevent phantom inventory.
+- **Physical Reconciliation Desk:** Storage Officers physically verify unconfirmed bags to either restore them to active stock or discard them with logged reasons.
 
-| # | State | Entered by | Valid from | Notes |
-|---|---|---|---|---|
-| 1 | **Registered** | Manager, Admin | — (initial) | Request logged |
-| 2 | **Verified** | Manager, Admin | Registered | Donor eligibility confirmed |
-| 3 | **Matched** | Manager, Admin | Verified | Compatible donor linked; atomic write required (see TDD §5, race-condition guard) |
-| 4 | **Donated** | Manager, Admin | Matched | Donation completed, units logged |
-| 5 | **Closed** | **Admin only** | Donated | Terminal — case fully resolved |
-| 6 | **Unfulfilled** (D-001) | **Admin only**, triggered by Manager flag | Registered **or** Verified only | Terminal — no eligible donor could be found. Not reachable from Matched/Donated. |
+### Milestone 3: Tiered Routine & Urgent Donor Dispatch
+- **Urgent FCFS Atomic Claiming:** Emergency requisitions permit concurrent donor slot claiming with double-lock lease management.
+- **Standby Donor Pool:** Zero-rejection policy automatically routes overflow donors into a managed standby pool.
+- **Licensed Facility Routing:** Shared routing engine directs donors strictly to licensed blood collection facilities, never to blood storage centres without collection licenses.
 
-No skip transitions. No backward transitions. Both terminal states (`Closed`, `Unfulfilled`) require Admin confirmation — same separation-of-duty rule for both.
+### Milestone 4: Multi-Tenant Hospital Requisition Portal
+- **Tenant Isolation (AC-SEC-01):** Hospital accounts are cryptographically locked to their assigned `hospitalId`. Any cross-tenant read or write is rejected at the database rules layer.
+- **Requisition Lifecycle:** Hospitals create requisitions in `Registered` status; cancellations are permitted only while in `Registered` state.
 
-## 6 · Functional Acceptance Criteria
+### Milestone 5: Blood Drives & Batch Manifests
+- **Batch Transfer Manifests:** Camp coordinators dispatch batches of collected units (`IN_TRANSIT`).
+- **Discrepancy Detection:** Receiving storage officers scan barcodes upon arrival; system flags missing or unexpected units (`RECEIVED_WITH_DISCREPANCY` vs `RECEIVED_VERIFIED`).
+- **Chunked Bulk Certification (DEC-015):** Idempotent 50-unit chunks apply a strict negative-filter invariant—only explicitly negative units reach active FEFO shelves; reactive units are permanently isolated and discarded.
+- **Transfusion Impact Tracker (DPDP Act §8):** Privacy-sanitized notification sent to donors when their blood is transfused (showing city and timestamp, zero patient or clinical diagnosis PII).
 
-- [ ] Each actor can perform their listed responsibilities and no others
-- [ ] All workflow transitions (including Unfulfilled) are enforced server-side via Firebase security rules, not client-only checks
-- [ ] Manager access is strictly camp-scoped (D-002) — verified by attempting cross-camp access and confirming denial
-- [ ] Only Admin can set status to Closed or Unfulfilled
-- [ ] Trainer Extension implemented: **Donor History**
-- [ ] All 3 universal reports generated correctly: Summary Report, Status Report, Activity Report
-- [ ] Every status change writes a corresponding `/auditLogs` entry
-- [ ] Application deployed to Firebase Hosting with public URL
+### Milestone 6: Community SOS Emergency Appeal
+- **Medical Officer Gate:** Authorized exclusively by verified Medical Officers or Admins for urgent/critical unfulfilled requisitions.
+- **Crypto-Secure Opaque Token:** Generates a 128-bit random token with a strict 2-hour TTL.
+- **Anti-DoS Volunteer Cap:** Public walk-in pledges are capped at $3 \times \text{unitsNeeded}$ to prevent hospital swarming.
+- **Clinical Invariant:** Public volunteer pledges **never** decrement clinical `unitsNeeded`. The hospital need remains intact until blood is physically collected, tested, and released.
+- **Privacy Masking:** Donor phone numbers are masked (`98****3211`) in public registries.
 
-## 7 · Out of Scope (v1)
+---
 
-- Payment/billing
-- SMS gateway (EmailJS only, and only if genuinely needed)
-- Public-facing recipient self-service portal (Recipient is data-only, not a login actor)
-- Blood bank inventory/stock management (this is request matching, not inventory)
-- Donor-attempt-level rejection tracking (evaluated and dropped — see conversation log; request-level Unfulfilled state covers the real gap without this added complexity)
+## 4 · Transfusion Compatibility Rules
+ABO & Rh(D) compatibility enforced identically on client and server (192 verified permutations):
+- **Red Cells / Whole Blood / Platelets:** Standard ABO/Rh compatibility. Universal donor is O-negative; universal recipient is AB-positive.
+- **Fresh Frozen Plasma (FFP):** Exact inverse of red cells. Universal donor is AB; universal recipient is O. Rh factor is clinically irrelevant for plasma.
 
-## 8 · Governance Cross-Reference
+---
 
-This FDD incorporates three logged deviations from the original 5-state brief and one clarification of an underspecified requirement:
-- **D-001** — Added `Unfulfilled` terminal state (see `CAP-23_Deviation_Log.md`)
-- **D-002** — Camp-scoped RBAC for Manager role (see `CAP-23_Deviation_Log.md`)
-- **D-003** — Cloudinary replaces Firebase Storage for Attachments (see `CAP-23_Deviation_Log.md`)
+## 5 · Compliance & Data Protection Matrix
+
+| Regulatory Requirement | System Enforcement Mechanism |
+|---|---|
+| **Drugs & Cosmetics Rules 1945** | Strict Maker-Checker certification; mandatory serology testing before stock entry; 30-minute return rule. |
+| **DGHS / NACO Guidelines** | Automated component cooldown calculations; annual and weekly apheresis donation limits. |
+| **DPDP Act 2023** | Split-node PII architecture; recipient names hidden from unassigned actors; masked phone numbers in public SOS registries; transfusion notifications reveal no clinical context. |
+| **Motor Vehicles Act § 184** | Silent transit shield: zero push notifications or cognitive distractions while a donor is marked `EN_ROUTE`. |

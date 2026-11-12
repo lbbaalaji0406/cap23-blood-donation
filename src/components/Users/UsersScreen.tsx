@@ -3,8 +3,8 @@ import { useAuth } from '../../contexts/AuthProvider';
 import { useRTDB } from '../../hooks/useRTDB';
 import { updateUserRoleAndCamp } from '../../services/userService';
 import type { Role } from '../../contexts/AuthProvider';
-import type { Camp, Hospital } from '../../services/masterService';
-import { Shield, Edit2, X, Plus } from 'lucide-react';
+import type { Camp, Hospital, BloodGroup } from '../../services/masterService';
+import { Shield, Edit2, X, Plus, Copy, Check, Droplet, Search } from 'lucide-react';
 import { orderByChild, equalTo } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
@@ -16,6 +16,8 @@ interface UserProfile {
   role: Role;
   campId?: string;
   hospitalId?: string;
+  bloodGroup?: string;
+  bloodGroupVerified?: boolean;
   createdAt: string;
 }
 
@@ -62,6 +64,16 @@ export const UsersScreen = () => {
   const { data: usersData, loading: usersLoading, error: usersError } = useRTDB<Record<string, Omit<UserProfile, 'uid'>>>('users', queryConstraints as any);
   const { data: campsData } = useRTDB<Record<string, Camp>>('masters/camp');
   const { data: hospitalsData } = useRTDB<Record<string, Hospital>>('masters/hospital');
+  const { data: bloodGroupsData } = useRTDB<Record<string, BloodGroup>>('masters/blood_group');
+
+  const [copiedUid, setCopiedUid] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleCopyUid = (uid: string) => {
+    navigator.clipboard.writeText(uid);
+    setCopiedUid(uid);
+    setTimeout(() => setCopiedUid(null), 2000);
+  };
 
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [selectedRole, setSelectedRole] = useState<Role>('Donor' as Role);
@@ -84,6 +96,21 @@ export const UsersScreen = () => {
 
   const users = usersData ? Object.entries(usersData).map(([uid, val]) => ({ uid, ...val })) : [];
   users.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const filteredUsers = users.filter(u => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    const bgCode = bloodGroupsData?.[u.bloodGroup || '']?.code || '';
+    const bgName = bloodGroupsData?.[u.bloodGroup || '']?.name || '';
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.uid.toLowerCase().includes(q) ||
+      bgCode.toLowerCase().includes(q) ||
+      bgName.toLowerCase().includes(q) ||
+      (u.campId && u.campId.toLowerCase().includes(q))
+    );
+  });
 
   const camps = campsData ? Object.entries(campsData).map(([id, val]) => ({ id, ...val })) : [];
   const hospitals = hospitalsData ? Object.entries(hospitalsData).map(([id, val]) => ({ id, ...val })) : [];
@@ -166,67 +193,115 @@ export const UsersScreen = () => {
 
   return (
     <div className="flex flex-col h-full gap-4 relative">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">User Management</h1>
-          <p className="text-slate-500 dark:text-slate-400">
-            {isAdmin ? 'Manage system users, roles, and camp assignments.' : 'Manage Donors in your camp.'}
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">User & Donor Management</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-sm mt-0.5">
+            {isAdmin ? 'Manage system users, roles, and camp assignments.' : `Manage Donors assigned to your camp (${profile?.campId || 'Camp'}). Check eligibility and copy donor UIDs for matching.`}
           </p>
         </div>
-        <button
-          onClick={() => { setIsAddingUser(true); setError(null); }}
-          className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-indigo-600 transition-colors font-medium text-sm"
-        >
-          <Plus size={18} />
-          Add User
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search donor, blood group, UID..."
+              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+            />
+          </div>
+          {isAdmin && (
+            <button
+              onClick={() => { setIsAddingUser(true); setError(null); }}
+              className="flex items-center gap-2 bg-primary text-white px-3.5 py-1.5 rounded-lg hover:bg-indigo-600 transition-colors font-medium text-xs whitespace-nowrap shadow-xs"
+            >
+              <Plus size={16} />
+              Add User
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
         <div className="overflow-auto h-full p-6">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-600 border-b border-slate-200 dark:border-slate-800">
+            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
               <tr>
-                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Donor / User</th>
                 <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Role</th>
+                <th className="px-4 py-3 font-medium">Blood Group</th>
                 <th className="px-4 py-3 font-medium">Eligibility</th>
                 <th className="px-4 py-3 font-medium">Camp Assignment</th>
                 {isAdmin && <th className="px-4 py-3 font-medium text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
-              {users.length === 0 ? (
+              {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 6 : 5} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
-                    No users found.
+                  <td colSpan={isAdmin ? 7 : 6} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400">
+                    {searchQuery ? `No users or donors match "${searchQuery}".` : 'No donors or users found.'}
                   </td>
                 </tr>
-              ) : users.map((user) => (
-                <tr key={user.uid} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 dark:bg-slate-800/50 transition-colors">
+              ) : filteredUsers.map((user) => (
+                <tr key={user.uid} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                   <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
                     <div>{user.name}</div>
-                    <div className="text-xs text-slate-400 font-mono mt-0.5" title="User UID">{user.uid}</div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[11px] text-slate-400 font-mono tracking-tight" title={user.uid}>
+                        {user.uid}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyUid(user.uid)}
+                        className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                        title="Copy UID"
+                      >
+                        {copiedUid === user.uid ? (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-0.5">
+                            <Check size={11} /> Copied
+                          </span>
+                        ) : (
+                          <Copy size={11} />
+                        )}
+                      </button>
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{user.email}</td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium ${
-                      user.role === 'Admin' ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' :
-                      user.role === 'Manager' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
-                      user.role === 'Hospital' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' :
-                      'bg-slate-100 text-slate-700 dark:text-slate-300 dark:bg-slate-800 dark:text-slate-300'
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium ${
+                      user.role === 'Admin' ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 border border-purple-200 dark:border-purple-800' :
+                      user.role === 'Manager' ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800' :
+                      user.role === 'Hospital' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400 border border-teal-200 dark:border-teal-800' :
+                      'bg-slate-100 text-slate-700 dark:text-slate-300 dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
                     }`}>
-                      <Shield size={14} /> {user.role}
+                      <Shield size={12} /> {user.role}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {user.bloodGroup ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+                        <Droplet size={12} className="fill-current text-rose-500" />
+                        {bloodGroupsData?.[user.bloodGroup]?.code || bloodGroupsData?.[user.bloodGroup]?.name || user.bloodGroup}
+                        {user.bloodGroupVerified && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold ml-0.5" title="Clinically Verified">✓</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <EligibilityBadge uid={user.uid} />
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                     {user.role === 'Manager' ? (
-                      user.campId ? <span className="font-medium">{user.campId}</span> : <span className="text-red-500">Unassigned</span>
+                      user.campId ? <span className="font-medium text-blue-700 dark:text-blue-400">{user.campId}</span> : <span className="text-red-500">Unassigned</span>
                     ) : user.role === 'Hospital' ? (
                       user.hospitalId ? <span className="font-medium text-teal-700 dark:text-teal-400">Hosp: {user.hospitalId}</span> : <span className="text-red-500">Unassigned</span>
+                    ) : user.role === 'Donor' ? (
+                      user.campId ? <span className="font-medium text-slate-700 dark:text-slate-300">{user.campId}</span> : <span className="text-slate-400 italic">Global / Unassigned</span>
                     ) : (
                       <span className="text-slate-400">N/A</span>
                     )}

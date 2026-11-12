@@ -5,7 +5,7 @@
       ".indexOn": ["campId"],
       "$uid": {
         ".read": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && data.child('campId').val() == root.child('users').child(auth.uid).child('campId').val()))",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (auth.uid == $uid && ((!data.exists() && newData.child('role').val() == 'Donor' && !newData.child('campId').exists() && (!newData.child('bloodGroup').exists() || root.child('masters/blood_group').child(newData.child('bloodGroup').val()).exists()) && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == false) && !newData.child('bloodGroupVerifiedBy').exists() && !newData.child('bloodGroupVerifiedAt').exists()) || (data.exists() && newData.child('role').val() == data.child('role').val() && newData.child('campId').val() == data.child('campId').val() && (!newData.child('bloodGroup').exists() || root.child('masters/blood_group').child(newData.child('bloodGroup').val()).exists()) && ((newData.child('bloodGroup').val() == data.child('bloodGroup').val() && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == data.child('bloodGroupVerified').val()) && (!newData.child('bloodGroupVerifiedBy').exists() || newData.child('bloodGroupVerifiedBy').val() == data.child('bloodGroupVerifiedBy').val()) && (!newData.child('bloodGroupVerifiedAt').exists() || newData.child('bloodGroupVerifiedAt').val() == data.child('bloodGroupVerifiedAt').val())) || (newData.child('bloodGroup').val() != data.child('bloodGroup').val() && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == false) && (!newData.child('bloodGroupVerifiedBy').exists() || newData.child('bloodGroupVerifiedBy').val() == null) && (!newData.child('bloodGroupVerifiedAt').exists() || newData.child('bloodGroupVerifiedAt').val() == null)))))))"
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (auth.uid == $uid && ((!data.exists() && newData.child('role').val() == 'Donor' && !newData.child('campId').exists() && !newData.child('hospitalId').exists() && (!newData.child('bloodGroup').exists() || root.child('masters/blood_group').child(newData.child('bloodGroup').val()).exists()) && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == false) && !newData.child('bloodGroupVerifiedBy').exists() && !newData.child('bloodGroupVerifiedAt').exists() && !newData.child('medical_referral').exists()) || (data.exists() && newData.child('role').val() == data.child('role').val() && newData.child('campId').val() == data.child('campId').val() && newData.child('hospitalId').val() == data.child('hospitalId').val() && (!data.child('medical_referral').exists() || newData.child('medical_referral').val() == data.child('medical_referral').val()) && (!newData.child('bloodGroup').exists() || root.child('masters/blood_group').child(newData.child('bloodGroup').val()).exists()) && ((newData.child('bloodGroup').val() == data.child('bloodGroup').val() && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == data.child('bloodGroupVerified').val()) && (!newData.child('bloodGroupVerifiedBy').exists() || newData.child('bloodGroupVerifiedBy').val() == data.child('bloodGroupVerifiedBy').val()) && (!newData.child('bloodGroupVerifiedAt').exists() || newData.child('bloodGroupVerifiedAt').val() == data.child('bloodGroupVerifiedAt').val())) || (newData.child('bloodGroup').val() != data.child('bloodGroup').val() && (!newData.child('bloodGroupVerified').exists() || newData.child('bloodGroupVerified').val() == false) && (!newData.child('bloodGroupVerifiedBy').exists() || newData.child('bloodGroupVerifiedBy').val() == null) && (!newData.child('bloodGroupVerifiedAt').exists() || newData.child('bloodGroupVerifiedAt').val() == null)))))))"
       }
     },
 
@@ -29,7 +29,7 @@
           ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId)",
           ".indexOn": ["createdAt"],
           "$requestId": {
-            ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId || (root.child('users').child(auth.uid).child('role').val() == 'Hospital' && root.child('users').child(auth.uid).child('hospitalId').val() == data.child('recipientHospitalId').val()) || (root.child('users').child(auth.uid).child('role').val() != 'Donor' && root.child('users').child(auth.uid).child('role').val() != 'Hospital') || root.child('matches/' + $requestId + '/' + auth.uid).exists())",
+            ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == $campId || (root.child('users').child(auth.uid).child('role').val() == 'Hospital' && root.child('users').child(auth.uid).child('hospitalId').val() == data.child('recipientHospitalId').val()) || root.child('matches/' + $requestId + '/' + auth.uid).exists())",
             ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Manager' && root.child('users').child(auth.uid).child('campId').val() == $campId)) && newData.child('recipientName').exists() && newData.child('blood_groupId').exists() && ((!data.exists() && newData.child('status').val() == 'Registered') || data.exists())"
           }
         }
@@ -70,23 +70,23 @@
 
     "donor_history": {
       "$donorUid": {
-        ".read": "auth != null && (auth.uid == $donorUid || root.child('users').child(auth.uid).child('role').val() != 'User')",
-        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() != 'User'",
+        ".read": "auth != null && (auth.uid == $donorUid || root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager' || root.child('users').child(auth.uid).child('role').val() == 'CampCoordinator')",
+        ".write": "false",
         ".indexOn": ["donationDate"]
       }
     },
 
     "comments": {
       "$transactionId": {
-        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val() || root.child('matches/' + $transactionId + '/' + auth.uid).exists())",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('matches/' + $transactionId + '/' + auth.uid).exists())"
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || (root.child('users').child(auth.uid).child('campId').exists() && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()) || root.child('matches/' + $transactionId + '/' + auth.uid).exists())",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('campId').exists() && root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val()) || root.child('matches/' + $transactionId + '/' + auth.uid).exists())"
       }
     },
 
     "attachments": {
       "$transactionId": {
-        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val() || root.child('matches/' + $transactionId + '/' + auth.uid).exists())",
-        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val() || root.child('matches/' + $transactionId + '/' + auth.uid).exists())"
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || !data.exists() || (root.child('users').child(auth.uid).child('campId').exists() && root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val()) || root.child('matches/' + $transactionId + '/' + auth.uid).exists())",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('campId').exists() && root.child('users').child(auth.uid).child('campId').val() == newData.child('campId').val()) || root.child('matches/' + $transactionId + '/' + auth.uid).exists())"
       }
     },
 
@@ -103,6 +103,74 @@
     "settings": {
       ".read": "auth != null",
       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'Admin'"
+    },
+
+    "inventory": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Storage')",
+      ".write": "false",
+      ".indexOn": ["status", "bloodGroup", "componentType", "expiryDate"]
+    },
+
+    "inventory_donor_ledger": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Storage')",
+      ".write": "false"
+    },
+
+    "hospital_issues": {
+      "$hospitalId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || (root.child('users').child(auth.uid).child('role').val() == 'Hospital' && root.child('users').child(auth.uid).child('hospitalId').val() == $hospitalId))",
+        ".write": "false"
+      }
+    },
+
+    "standby_pools": {
+      "$requestId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager' || data.child(auth.uid).exists())",
+        ".write": "false"
+      }
+    },
+
+    "urgent_claims": {
+      "$requestId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager' || root.child('users').child(auth.uid).child('role').val() == 'CampCoordinator' || root.child('users').child(auth.uid).child('role').val() == 'Hospital')",
+        ".write": "false"
+      }
+    },
+
+    "watchdogs": {
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Storage')",
+      ".write": "false",
+      "scan_timeout": {
+        ".indexOn": ["deadlineAt"]
+      }
+    },
+
+    "public_volunteers": {
+      "$requestId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Manager')",
+        ".write": "false"
+      }
+    },
+
+    "transfer_manifests": {
+      "$manifestId": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Storage' || root.child('users').child(auth.uid).child('campId').val() == data.child('campId').val())",
+        ".write": "false"
+      }
+    },
+
+    "sos_links": {
+      "$token": {
+        ".read": "true",
+        ".write": "false"
+      }
+    },
+
+    "donor_transfusion_impacts": {
+      "$donorUid": {
+        ".read": "auth != null && (auth.uid == $donorUid || root.child('users').child(auth.uid).child('role').val() == 'Admin')",
+        ".write": "false"
+      }
     }
   }
 }

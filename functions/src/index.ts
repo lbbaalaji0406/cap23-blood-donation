@@ -1,6 +1,9 @@
 import * as functions from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import * as crypto from 'crypto';
 import { defineSecret } from 'firebase-functions/params';
+import { resolveCollectionDestination } from './domain/routing';
+import { isBloodCompatible } from './domain/compatibility';
 
 const databaseURL = process.env.FIREBASE_DATABASE_EMULATOR_HOST
   ? `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}/?ns=cap23-blood-donation-default-rtdb`
@@ -11,7 +14,34 @@ admin.initializeApp({
 });
 
 // Utilities
-export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[] => {
+export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
+
+// Transfusion Medicine Compatibility Matrix:
+// 1. Fresh Frozen Plasma (FFP): Rh(D) is clinically irrelevant; ABO is the exact inverse of RBC.
+// 2. Whole Blood / RBC / Platelets: Strict ABO and Rh matching.
+export const getCompatibleDonorGroups = (
+  recipientBloodGroupId: string,
+  componentType: BloodComponentType = 'WholeBlood'
+): string[] => {
+  if (componentType === 'Plasma') {
+    switch (recipientBloodGroupId) {
+      case 'O_plus':
+      case 'O_minus':
+        return ['O_plus', 'O_minus', 'A_plus', 'A_minus', 'B_plus', 'B_minus', 'AB_plus', 'AB_minus'];
+      case 'A_plus':
+      case 'A_minus':
+        return ['A_plus', 'A_minus', 'AB_plus', 'AB_minus'];
+      case 'B_plus':
+      case 'B_minus':
+        return ['B_plus', 'B_minus', 'AB_plus', 'AB_minus'];
+      case 'AB_plus':
+      case 'AB_minus':
+        return ['AB_plus', 'AB_minus'];
+      default:
+        return [];
+    }
+  }
+
   switch (recipientBloodGroupId) {
     case 'A_plus': return ['A_plus', 'A_minus', 'O_plus', 'O_minus'];
     case 'A_minus': return ['A_minus', 'O_minus'];
@@ -24,8 +54,6 @@ export const getCompatibleDonorGroups = (recipientBloodGroupId: string): string[
     default: return [];
   }
 };
-
-export type BloodComponentType = 'WholeBlood' | 'Platelets' | 'Plasma';
 
 /**
  * Transfusion Cooldown & Safety Configuration
@@ -433,20 +461,20 @@ export const processWorkflowState = functions.https.onCall({ secrets: [emailjsSe
 
     return await handleRespondToMatch(campId, requestId, auth.uid, response, auth.uid, callerProfile.name || 'Unknown');
   } else if (action === 'UPDATE_STATUS') {
-    if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId) {
-      throw new functions.https.HttpsError('permission-denied', 'Only Camp Managers or Admins can update status.');
+    if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId && callerProfile.role !== 'Storage') {
+      throw new functions.https.HttpsError('permission-denied', 'Only Camp Managers, Storage Officers, or Admins can update status.');
     }
     const { currentStatus, newStatus, donorUid, volume, bloodGroup } = data;
     if (!currentStatus || !newStatus) {
       throw new functions.https.HttpsError('invalid-argument', 'Missing status parameters.');
     }
-    return await handleUpdateStatus(campId, requestId, currentStatus, newStatus, auth.uid, callerProfile.name || 'Unknown', donorUid, volume, bloodGroup);
+    return await handleUpdateStatus(campId, requestId, currentStatus, newStatus, auth.uid, callerProfile.name || 'Unknown', donorUid, volume, bloodGroup, callerProfile.role);
   }
 
   throw new functions.https.HttpsError('invalid-argument', `Unknown action: ${action}`);
 });
 
-async function handleUpdateStatus(campId: string, requestId: string, currentStatus: string, newStatus: string, actorUid: string, actorName: string, donorUid?: string, volume?: number, bloodGroup?: string) {
+async function handleUpdateStatus(campId: string, requestId: string, currentStatus: string, newStatus: string, actorUid: string, actorName: string, donorUid?: string, volume?: number, bloodGroup?: string, actorRole?: string) {
   const db = admin.database();
   try {
     const rootUpdates: any = {};
@@ -454,26 +482,26 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
     const reqData = reqSnap.val() || {};
     const recipientHospitalId = reqData.recipientHospitalId;
 
-    if (newStatus === 'Donated' || newStatus === 'Closed' || newStatus === 'Unfulfilled') {
-      rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newStatus;
-      rootUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+    if (newStatus === 'Donated') {
+      const unitsNeeded = reqData.unitsNeeded || 1;
+      const currentUnitsCollected = reqData.unitsCollected || 0;
+      const collectedVolume = volume || 1;
+      const newUnitsCollected = currentUnitsCollected + collectedVolume;
       
-      // EXPLICIT LOCK RELEASE: Clear global locks for all donors matched to this request
-      const matchesSnap = await db.ref(`matches/${requestId}`).once('value');
-      if (matchesSnap.exists()) {
-        matchesSnap.forEach(child => {
-          const matchDonorUid = child.key as string;
-          rootUpdates[`active_donor_matches/${matchDonorUid}`] = null;
-        });
-      }
+      rootUpdates[`transactions/donation_request/${campId}/${requestId}/unitsCollected`] = newUnitsCollected;
       
-      if (donorUid && newStatus === 'Donated') {
+      if (donorUid) {
+        rootUpdates[`matches/${requestId}/${donorUid}/status`] = 'donated';
+        rootUpdates[`matches/${requestId}/${donorUid}/donatedAt`] = { '.sv': 'timestamp' };
+        rootUpdates[`matches/${requestId}/${donorUid}/volume`] = collectedVolume;
+        rootUpdates[`active_donor_matches/${donorUid}`] = null;
+
         const compType: BloodComponentType = reqData.componentType || 'WholeBlood';
 
         rootUpdates[`donor_history/${donorUid}/${requestId}`] = {
           requestId,
           donationDate: { '.sv': 'timestamp' },
-          volume: volume || 1,
+          volume: collectedVolume,
           componentType: compType,
           campId,
           verifiedBy: actorUid
@@ -488,24 +516,70 @@ async function handleUpdateStatus(campId: string, requestId: string, currentStat
           rootUpdates[`donor_eligibility/${donorUid}/lastPlasmaDate`] = { '.sv': 'timestamp' };
         }
 
-        // Verify blood group during donation
-        if (bloodGroup) {
+        // Stamping verified blood group only if confirmed by licensed lab or registered manager
+        if (bloodGroup && (actorRole === 'Manager' || actorRole === 'Admin')) {
           rootUpdates[`users/${donorUid}/bloodGroup`] = bloodGroup;
+          rootUpdates[`users/${donorUid}/bloodGroupVerified`] = true;
+          rootUpdates[`users/${donorUid}/bloodGroupVerifiedBy`] = actorUid;
+          rootUpdates[`users/${donorUid}/bloodGroupVerifiedAt`] = { '.sv': 'timestamp' };
         }
-        rootUpdates[`users/${donorUid}/bloodGroupVerified`] = true;
-        rootUpdates[`users/${donorUid}/bloodGroupVerifiedBy`] = actorUid;
-        rootUpdates[`users/${donorUid}/bloodGroupVerifiedAt`] = { '.sv': 'timestamp' };
+      }
+
+      // Determine final status based on fulfillment
+      let finalStatus = 'Donated';
+      if (newUnitsCollected < unitsNeeded) {
+        finalStatus = 'Partially Matched';
+      } else {
+        // Full fulfillment: release any other stale locks
+        const matchesSnap = await db.ref(`matches/${requestId}`).once('value');
+        if (matchesSnap.exists()) {
+          matchesSnap.forEach(child => {
+            const matchDonorUid = child.key as string;
+            if (matchDonorUid !== donorUid && child.val().status !== 'donated') {
+              rootUpdates[`active_donor_matches/${matchDonorUid}`] = null;
+            }
+          });
+        }
+      }
+
+      rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = finalStatus;
+      rootUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+
+      if (recipientHospitalId) {
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/status`] = finalStatus;
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/unitsCollected`] = newUnitsCollected;
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+      }
+    } else if (newStatus === 'Closed' || newStatus === 'Unfulfilled') {
+      rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newStatus;
+      rootUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+
+      // Release active locks strictly belonging to this request (Flaw 6 resolution)
+      const matchesSnap = await db.ref(`matches/${requestId}`).once('value');
+      if (matchesSnap.exists()) {
+        const matchesVal = matchesSnap.val() || {};
+        for (const matchDonorUid of Object.keys(matchesVal)) {
+          const donorLockSnap = await db.ref(`active_donor_matches/${matchDonorUid}`).get();
+          if (donorLockSnap.exists() && donorLockSnap.val().requestId === requestId) {
+            rootUpdates[`active_donor_matches/${matchDonorUid}`] = null;
+          }
+        }
+      }
+
+      if (recipientHospitalId) {
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/status`] = newStatus;
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
       }
     } else {
       rootUpdates[`transactions/donation_request/${campId}/${requestId}/status`] = newStatus;
       rootUpdates[`transactions/donation_request/${campId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+
+      if (recipientHospitalId) {
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/status`] = newStatus;
+        rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+      }
     }
 
-    if (recipientHospitalId) {
-      rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/status`] = newStatus;
-      rootUpdates[`hospital_requests/${recipientHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
-    }
-    
     await db.ref().update(rootUpdates);
     
     await logAudit(requestId, actorUid, actorName, 'UPDATE_STATUS', 'Success', null, currentStatus, newStatus);
@@ -536,11 +610,23 @@ async function handleMatchDonor(campId: string, requestId: string, donorUid: str
   const requestDetails = requestSnap.val();
   const recipientBloodGroupId = requestDetails.blood_groupId;
   const requestedComponent: BloodComponentType = requestDetails.componentType || 'WholeBlood';
-  const unitsSecured = requestDetails.unitsSecured || 0;
   const unitsNeeded = requestDetails.unitsNeeded || 1;
+  const unitsCollected = requestDetails.unitsCollected || 0;
   
-  if (unitsSecured >= unitsNeeded) {
-    throw new functions.https.HttpsError('failed-precondition', 'Donation request is already fully fulfilled.');
+  // Calculate active matches count (donors who are pending_response, accepted, or donated)
+  let activeMatchesCount = 0;
+  const matchesSnap = await db.ref(`matches/${requestId}`).once('value');
+  if (matchesSnap.exists()) {
+    matchesSnap.forEach(child => {
+      const st = child.val().status;
+      if (st === 'pending_response' || st === 'accepted' || st === 'donated') {
+        activeMatchesCount += (child.val().volume || 1);
+      }
+    });
+  }
+
+  if (activeMatchesCount >= unitsNeeded || unitsCollected >= unitsNeeded) {
+    throw new functions.https.HttpsError('failed-precondition', 'Donation request is already fully matched or collected.');
   }
 
   // 0. Eligibility check against NACO/NBTC & DGHS component cooldown matrix
@@ -568,9 +654,14 @@ async function handleMatchDonor(campId: string, requestId: string, donorUid: str
   if (donorData.role !== 'Donor') {
     throw new functions.https.HttpsError('failed-precondition', 'User is not a Donor.');
   }
+
+  if (donorData.medical_referral === 'DEFERRED' || donorData.isDeferred === true) {
+    await logAudit(requestId, actorUid, actorName, 'MATCH_DONOR', 'Failed', 'Donor deferred due to serological / medical safety findings.');
+    throw new functions.https.HttpsError('failed-precondition', 'Donor is medically deferred from blood donation.');
+  }
   
   if (recipientBloodGroupId) {
-    const compatibleGroups = getCompatibleDonorGroups(recipientBloodGroupId);
+    const compatibleGroups = getCompatibleDonorGroups(recipientBloodGroupId, requestedComponent);
     if (!donorData.bloodGroup || !compatibleGroups.includes(donorData.bloodGroup)) {
       await logAudit(requestId, actorUid, actorName, 'MATCH_DONOR', 'Failed', 'Donor physically incompatible with recipient.');
       throw new functions.https.HttpsError('failed-precondition', 'Donor blood group is physically incompatible with recipient.');
@@ -654,7 +745,7 @@ async function findNextEligibleDonor(campId: string, requestId: string, recipien
 
   // 2. Get all users
   const usersSnap = await db.ref('users').once('value');
-  const compatibleGroups = getCompatibleDonorGroups(recipientBloodGroupId);
+  const compatibleGroups = getCompatibleDonorGroups(recipientBloodGroupId, requestedComponent);
 
   const eligibleDonors: string[] = [];
   
@@ -667,6 +758,7 @@ async function findNextEligibleDonor(campId: string, requestId: string, recipien
     
     if (data.role !== 'Donor') return;
     if (excludedDonors.has(uid)) return;
+    if (data.medical_referral === 'DEFERRED' || data.isDeferred === true) return; // Statutory infection safety guard
     if (!data.bloodGroup || !compatibleGroups.includes(data.bloodGroup)) return;
     
     // Check history with evaluateDonorEligibility
@@ -887,6 +979,12 @@ export const createUserByAdmin = functions.https.onCall({ secrets: [emailjsServi
     const hospSnap = await admin.database().ref(`masters/hospital/${hospitalId}`).get();
     if (!hospSnap.exists()) {
       throw new functions.https.HttpsError('not-found', `Hospital '${hospitalId}' does not exist in master records.`);
+    }
+  }
+
+  if (role === 'Storage') {
+    if (callerProfile.role !== 'Admin') {
+      throw new functions.https.HttpsError('permission-denied', 'Only Admins can provision Storage users.');
     }
   }
 
@@ -1324,8 +1422,1285 @@ export async function processMatchTimeoutsInternal(specificRequestId?: string, c
 }
 
 export const processMatchTimeouts = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  const allowedRoles = ['Admin', 'Manager', 'CampCoordinator'];
+  if (!allowedRoles.includes(caller.role)) {
+    throw new functions.https.HttpsError('permission-denied', 'Only Admins, Managers, or Camp Coordinators can invoke match timeout sweeps.');
+  }
+
   const { requestId, campId } = request.data || {};
   return await processMatchTimeoutsInternal(requestId, campId);
 });
 
+/**
+ * -------------------------------------------------------------
+ * CENTRAL STORAGE & COLD CHAIN MANAGEMENT (Milestone 1 & 2)
+ * -------------------------------------------------------------
+ */
 
+// 1. Intake Storage Unit (Enforces Quarantined and server-side enteredBy)
+export const intakeStorageUnit = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const callerSnap = await admin.database().ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admins can intake units.');
+  }
+
+  const data = request.data || {};
+  const {
+    bagBarcode,
+    bloodGroup,
+    componentType,
+    volumeMl,
+    preservativeSolution,
+    storageTemperatureCelsius,
+    storageLocation,
+    sourceCampId,
+    sourceBatchId,
+    donorUid
+  } = data;
+
+  if (!bagBarcode || !bloodGroup || !componentType) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing required unit fields.');
+  }
+
+  const db = admin.database();
+  const unitRef = db.ref('inventory/units').push();
+  const unitId = unitRef.key!;
+
+  // Default shelf life days per DGHS rules
+  let shelfLifeDays = 35;
+  if (componentType === 'Platelets') shelfLifeDays = 5;
+  else if (componentType === 'Plasma') shelfLifeDays = 90;
+  else if (preservativeSolution === 'SAGM') shelfLifeDays = 42;
+
+  const now = Date.now();
+  const expiryDate = new Date(now + shelfLifeDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const unitPayload = {
+    unitId,
+    bagBarcode,
+    bloodGroup,
+    componentType,
+    volumeMl: volumeMl || 350,
+    collectionDate: new Date(now).toISOString(),
+    expiryDate,
+    preservativeSolution: preservativeSolution || 'CPDA-1',
+    storageTemperatureCelsius: storageTemperatureCelsius ?? 4,
+    status: 'Quarantined',
+    storageLocation: storageLocation || 'Quarantine-Bay',
+    sourceCampId: sourceCampId || null,
+    sourceBatchId: sourceBatchId || null,
+    enteredBy: auth.uid,
+    createdAt: now
+  };
+
+  const updates: Record<string, any> = {};
+  updates[`inventory/units/${unitId}`] = unitPayload;
+
+  // Split-Node PII Ledger (DEC-016)
+  if (donorUid) {
+    updates[`inventory_donor_ledger/${unitId}`] = {
+      unitId,
+      bagBarcode,
+      donorUid,
+      donationDate: new Date(now).toISOString(),
+      confidentialReferenceCode: `REF-${Math.random().toString(36).slice(-8).toUpperCase()}`
+    };
+  }
+
+  // Audit log
+  updates[`audit_logs/units/${unitId}/${now}`] = {
+    unitId,
+    actorUid: auth.uid,
+    actorRole: caller.role,
+    action: 'UNIT_INTAKE_QUARANTINED',
+    status: 'Success',
+    timestamp: now,
+    details: `Intake unit ${bagBarcode} (${bloodGroup} ${componentType}) into Quarantine`
+  };
+
+  await db.ref().update(updates);
+  return { success: true, unitId, status: 'Quarantined', expiryDate };
+});
+
+// 2. Certify Storage Unit (Maker-Checker & Lab-Confirmed TTI/ABO Gate)
+export const certifyStorageUnit = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+  }
+
+  const callerSnap = await admin.database().ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admins can certify units.');
+  }
+
+  const { unitId, labConfirmedBloodGroup, rhTyping, ttiLotNumbers, isReactive, reactiveReason } = request.data || {};
+  if (!unitId || !labConfirmedBloodGroup || !rhTyping || !ttiLotNumbers) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing mandatory lab typing or TTI lot verification.');
+  }
+
+  const db = admin.database();
+  const unitSnap = await db.ref(`inventory/units/${unitId}`).get();
+  if (!unitSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'Unit not found.');
+  }
+
+  const unit = unitSnap.val();
+  if (unit.status !== 'Quarantined') {
+    throw new functions.https.HttpsError('failed-precondition', `Unit is in '${unit.status}' status, cannot certify.`);
+  }
+
+  // Maker-Checker Rule (DEC-015): Certifier must differ from intake officer
+  if (unit.enteredBy === auth.uid && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Maker-Checker Violation: Certifier cannot be the same officer who entered the intake.');
+  }
+
+  const now = Date.now();
+  const updates: Record<string, any> = {};
+
+  if (isReactive) {
+    // TTI Reactive discard path
+    updates[`inventory/units/${unitId}/status`] = 'Discarded';
+    updates[`inventory/units/${unitId}/discardReason`] = reactiveReason || 'TTI_REACTIVE';
+    updates[`inventory/units/${unitId}/discardedAt`] = now;
+    updates[`inventory/units/${unitId}/discardedBy`] = auth.uid;
+
+    // Check if donor ledger exists and flag confidential referral without disease details
+    const ledgerSnap = await db.ref(`inventory_donor_ledger/${unitId}`).get();
+    if (ledgerSnap.exists()) {
+      const donorUid = ledgerSnap.val().donorUid;
+      updates[`users/${donorUid}/medical_referral`] = {
+        status: 'DEFERRED',
+        reason: 'CONTACT_CENTRE',
+        updatedAt: now
+      };
+    }
+
+    updates[`audit_logs/units/${unitId}/${now}`] = {
+      unitId,
+      actorUid: auth.uid,
+      action: 'UNIT_DISCARDED_TTI_REACTIVE',
+      status: 'Discarded',
+      timestamp: now,
+      details: `Unit ${unit.bagBarcode} discarded due to reactive serology.`
+    };
+
+    await db.ref().update(updates);
+    return { success: true, status: 'Discarded' };
+  }
+
+  // Non-reactive: mark Certified and index for FEFO
+  updates[`inventory/units/${unitId}/status`] = 'Certified';
+  updates[`inventory/units/${unitId}/bloodGroup`] = labConfirmedBloodGroup;
+  updates[`inventory/units/${unitId}/rhTyping`] = rhTyping;
+  updates[`inventory/units/${unitId}/certifiedBy`] = auth.uid;
+  updates[`inventory/units/${unitId}/certifiedAt`] = now;
+  updates[`inventory/units/${unitId}/ttiLotNumbers`] = ttiLotNumbers;
+
+  // FEFO Index: /inventory/fefo/{group}_{component}/{expiryTimestamp}_{unitId}
+  const expiryEpoch = new Date(unit.expiryDate).getTime();
+  updates[`inventory/fefo/${labConfirmedBloodGroup}_${unit.componentType}/${expiryEpoch}_${unitId}`] = true;
+
+  updates[`audit_logs/units/${unitId}/${now}`] = {
+    unitId,
+    actorUid: auth.uid,
+    action: 'UNIT_CERTIFIED_SAFE',
+    status: 'Certified',
+    timestamp: now,
+    details: `Unit ${unit.bagBarcode} certified safe for transfusion (Maker-checker confirmed).`
+  };
+
+  await db.ref().update(updates);
+  return { success: true, status: 'Certified' };
+});
+
+// 3. Reserve Stock Units with Atomic Concurrency & FEFO Saga (Mode A)
+export const reserveStockUnits = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Hospital' && caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Hospital, Storage, or Admin can reserve stock units.');
+  }
+
+  const { requestId, recipientBloodGroupId, componentType, unitsNeeded } = request.data || {};
+  if (!requestId || !recipientBloodGroupId || !componentType) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing requisition details.');
+  }
+
+  const needed = unitsNeeded || 1;
+
+  // 1. Query certified units with FEFO order from composite index
+  const fefoRef = db.ref(`inventory/fefo/${recipientBloodGroupId}_${componentType}`);
+  const fefoSnap = await fefoRef.orderByKey().limitToFirst(needed * 4).get();
+
+  const candidateUnitIds: string[] = [];
+  if (fefoSnap.exists()) {
+    fefoSnap.forEach((child) => {
+      const parts = child.key!.split('_');
+      const unitId = parts.slice(1).join('_');
+      candidateUnitIds.push(unitId);
+    });
+  }
+
+  const reservationId = `RES-${Date.now()}`;
+  const now = Date.now();
+  const reservedUnits: any[] = [];
+  const deadlineAt = now + 10 * 60 * 1000; // 10 minute physical scan deadline
+
+  // 2. Perform atomic per-unit reservation transactions to eliminate TOCTOU races
+  for (const unitId of candidateUnitIds) {
+    if (reservedUnits.length >= needed) break;
+
+    const txResult = await db.ref(`inventory/units/${unitId}`).transaction((current) => {
+      if (!current) return current;
+      if (current.status !== 'Certified') {
+        return; // Abort: already reserved or status changed
+      }
+      current.status = 'Stock_Reserved';
+      current.reservationId = reservationId;
+      current.reservedAt = now;
+      current.reservedForRequest = requestId;
+      current.reservedBy = auth.uid;
+      current.deadlineAt = deadlineAt;
+      current.version = (current.version || 1) + 1;
+      return current;
+    });
+
+    if (txResult.committed && txResult.snapshot.exists()) {
+      const u = txResult.snapshot.val();
+      reservedUnits.push(u);
+
+      // Atomically remove from active FEFO index
+      const expiryEpoch = new Date(u.expiryDate).getTime();
+      await db.ref(`inventory/fefo/${recipientBloodGroupId}_${componentType}/${expiryEpoch}_${unitId}`).remove();
+
+      // Register in flat watchdog index for 10-minute scan timeout
+      await db.ref(`watchdogs/scan_timeout/${unitId}`).set({
+        unitId,
+        reservationId,
+        requestId,
+        deadlineAt,
+        version: u.version
+      });
+
+      // Audit log entry
+      await db.ref(`audit_logs/units/${unitId}/${now}`).set({
+        unitId,
+        actorUid: auth.uid,
+        action: 'UNIT_STOCK_RESERVED',
+        status: 'Stock_Reserved',
+        timestamp: now,
+        details: `Unit ${u.bagBarcode} atomically reserved for request ${requestId} (Deadline: 10m).`
+      });
+    }
+  }
+
+  if (reservedUnits.length >= needed) {
+    // Mode A: Satisfied fully from cold storage!
+    return { success: true, reservedUnits, mode: 'Mode_A' };
+  }
+
+  // If partial or depleted, signal Mode B required
+  return {
+    success: false,
+    reservedUnits,
+    mode: 'Mode_B_Required',
+    deficit: needed - reservedUnits.length,
+    message: `Insufficient stock on shelf (${reservedUnits.length}/${needed} available). Mobilizing Camp Donors (Mode B).`
+  };
+});
+
+// 4. Confirm Barcode Dispatch (Dual-state: Stock_Reserved or ISSUE_UNCONFIRMED)
+export const confirmBarcodeDispatch = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admin can confirm physical barcode dispatch.');
+  }
+
+  const { unitId, bagBarcode } = request.data || {};
+  if (!unitId || !bagBarcode) {
+    throw new functions.https.HttpsError('invalid-argument', 'Unit ID and Barcode required.');
+  }
+
+  // Atomic state transaction on inventory/units/{unitId} to prevent race with reconcileUnconfirmedUnit (R2)
+  const unitRef = db.ref(`inventory/units/${unitId}`);
+  let unitData: any = null;
+  let isLate = false;
+
+  const txnResult = await unitRef.transaction((currentUnit) => {
+    if (!currentUnit) return currentUnit;
+    if (currentUnit.bagBarcode !== bagBarcode) return; // mismatch aborts
+    if (currentUnit.status !== 'Stock_Reserved' && currentUnit.status !== 'ISSUE_UNCONFIRMED') {
+      return; // invalid status aborts
+    }
+
+    isLate = currentUnit.status === 'ISSUE_UNCONFIRMED';
+    const now = Date.now();
+    return {
+      ...currentUnit,
+      status: 'Dispatched',
+      dispatchedAt: now,
+      dispatchedBy: auth.uid,
+      deadlineAt: null,
+      lateScan: isLate ? true : (currentUnit.lateScan || false)
+    };
+  });
+
+  if (!txnResult.committed || !txnResult.snapshot.exists()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Cannot dispatch unit: Barcode mismatch, unit not found, or unit is not in Stock_Reserved / ISSUE_UNCONFIRMED status.'
+    );
+  }
+
+  unitData = txnResult.snapshot.val();
+  const now = unitData.dispatchedAt || Date.now();
+  const postUpdates: Record<string, any> = {};
+
+  // Clear watchdog queue
+  postUpdates[`watchdogs/scan_timeout/${unitId}`] = null;
+
+  // Resolve hospital securely from unit.reservedForRequest, ignoring untrusted client hospitalId (R6)
+  let resolvedHospitalId: string | null = null;
+  if (unitData.reservedForRequest) {
+    const reqSnap = await db.ref(`blood_requests/${unitData.reservedForRequest}`).get();
+    if (reqSnap.exists()) {
+      resolvedHospitalId = reqSnap.val().hospitalId || null;
+    }
+  }
+
+  if (resolvedHospitalId) {
+    postUpdates[`hospital_issues/${resolvedHospitalId}/${unitId}`] = {
+      unitId,
+      bagBarcode: unitData.bagBarcode,
+      bloodGroup: unitData.bloodGroup,
+      componentType: unitData.componentType,
+      expiryDate: unitData.expiryDate,
+      dispatchedAt: now
+    };
+  }
+
+  postUpdates[`audit_logs/units/${unitId}/${now}`] = {
+    unitId,
+    actorUid: auth.uid,
+    action: isLate ? 'UNIT_DISPATCHED_LATE_SCAN' : 'UNIT_DISPATCHED',
+    status: 'Dispatched',
+    timestamp: now,
+    details: `Physical barcode verified. Unit ${unitData.bagBarcode} dispatched${isLate ? ' (Late scan accepted)' : ''}.`
+  };
+
+  await db.ref().update(postUpdates);
+  return { success: true, lateScan: isLate };
+});
+
+// 5. Server-Validated 30-Minute Return Callable (processUnitReturn)
+export const processUnitReturn = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admin can process returns.');
+  }
+
+  const { unitId, coldChainIntact, returnTempCelsius } = request.data || {};
+  if (!unitId) throw new functions.https.HttpsError('invalid-argument', 'Unit ID required.');
+
+  const unitSnap = await db.ref(`inventory/units/${unitId}`).get();
+  if (!unitSnap.exists()) throw new functions.https.HttpsError('not-found', 'Unit not found.');
+
+  const unit = unitSnap.val();
+  if (unit.status !== 'Dispatched') {
+    throw new functions.https.HttpsError('failed-precondition', `Unit is in status '${unit.status}', cannot return.`);
+  }
+
+  const now = Date.now();
+  const elapsedMinutes = (now - (unit.dispatchedAt || now)) / (1000 * 60);
+  const updates: Record<string, any> = {};
+
+  // Component-specific rules
+  let canReturnToCertified = false;
+  let reason = '';
+
+  if (unit.componentType === 'Plasma') {
+    canReturnToCertified = false;
+    reason = 'Thawed FFP / Cryo cannot be re-shelved.';
+  } else if (unit.componentType === 'Platelets') {
+    canReturnToCertified = elapsedMinutes <= 30 && coldChainIntact && returnTempCelsius >= 20 && returnTempCelsius <= 24;
+    reason = canReturnToCertified ? 'Platelets returned in temperature range.' : 'Platelet return out of range or >30 mins.';
+  } else {
+    // RBC
+    canReturnToCertified = elapsedMinutes <= 30 && coldChainIntact && returnTempCelsius <= 10;
+    reason = canReturnToCertified ? 'RBC returned under 30 minutes with cold chain intact.' : `Return elapsed ${Math.round(elapsedMinutes)}m or temp ${returnTempCelsius}°C breached.`;
+  }
+
+  if (canReturnToCertified) {
+    updates[`inventory/units/${unitId}/status`] = 'Certified';
+    updates[`inventory/units/${unitId}/returnedAt`] = now;
+    // Re-index into FEFO
+    const expiryEpoch = new Date(unit.expiryDate).getTime();
+    updates[`inventory/fefo/${unit.bloodGroup}_${unit.componentType}/${expiryEpoch}_${unitId}`] = true;
+  } else {
+    updates[`inventory/units/${unitId}/status`] = 'Discarded';
+    updates[`inventory/units/${unitId}/discardReason`] = `RETURN_BREACH: ${reason}`;
+    updates[`inventory/units/${unitId}/discardedAt`] = now;
+  }
+
+  updates[`audit_logs/units/${unitId}/${now}`] = {
+    unitId,
+    actorUid: auth.uid,
+    action: canReturnToCertified ? 'UNIT_RETURNED_TO_STOCK' : 'UNIT_RETURN_DISCARDED',
+    status: canReturnToCertified ? 'Certified' : 'Discarded',
+    timestamp: now,
+    details: reason
+  };
+
+  await db.ref().update(updates);
+  return {
+    success: true,
+    status: canReturnToCertified ? 'Certified' : 'Discarded',
+    elapsedMinutes,
+    reason
+  };
+});
+
+// 6. Ghost-Inventory Scan Timeout Watchdog Sweep (sweepScanTimeouts)
+export const sweepScanTimeouts = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Storage Officers or Admin only.');
+  }
+
+  const { simulatedNow } = request.data || {};
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true' || !!process.env.FIREBASE_DATABASE_EMULATOR_HOST;
+  const now = (isEmulator && simulatedNow) ? Number(simulatedNow) : Date.now();
+  const timeoutsSnap = await db.ref('watchdogs/scan_timeout')
+    .orderByChild('deadlineAt')
+    .endAt(now)
+    .get();
+
+  const timedOutUnits: string[] = [];
+  if (timeoutsSnap.exists()) {
+    const entries = timeoutsSnap.val();
+    for (const unitId of Object.keys(entries)) {
+      // Atomic transition from Stock_Reserved to ISSUE_UNCONFIRMED
+      const txResult = await db.ref(`inventory/units/${unitId}`).transaction((current) => {
+        if (!current) return current;
+        if (current.status !== 'Stock_Reserved') return; // already dispatched or reconciled
+        current.status = 'ISSUE_UNCONFIRMED';
+        current.unconfirmedAt = now;
+        current.version = (current.version || 1) + 1;
+        return current;
+      });
+
+      if (txResult.committed && txResult.snapshot.exists()) {
+        timedOutUnits.push(unitId);
+        // Clear from watchdog queue
+        await db.ref(`watchdogs/scan_timeout/${unitId}`).remove();
+
+        // Audit log
+        await db.ref(`audit_logs/units/${unitId}/${now}`).set({
+          unitId,
+          actorUid: 'SYSTEM_WATCHDOG',
+          action: 'UNIT_SCAN_TIMEOUT_UNCONFIRMED',
+          status: 'ISSUE_UNCONFIRMED',
+          timestamp: now,
+          details: `Unit ${unitId} exceeded 10m physical scan timeout. Held in quarantine (Mode B activated).`
+        });
+      }
+    }
+  }
+
+  return { success: true, processedCount: timedOutUnits.length, timedOutUnits };
+});
+
+// 7. Reconcile Unconfirmed Unit (reconcileUnconfirmedUnit)
+export const reconcileUnconfirmedUnit = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const callerSnap = await db.ref(`users/${auth.uid}`).get();
+  const caller = callerSnap.val() || {};
+  if (caller.role !== 'Storage' && caller.role !== 'Admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admin can reconcile unconfirmed units.');
+  }
+
+  const { unitId, physicalCheckPassed, reason } = request.data || {};
+  if (!unitId) throw new functions.https.HttpsError('invalid-argument', 'Unit ID required.');
+
+  // Atomic state transaction on inventory/units/{unitId} to prevent race with late barcode scan (R2)
+  const unitRef = db.ref(`inventory/units/${unitId}`);
+  let finalStatus: 'Certified' | 'Discarded' = 'Discarded';
+  let unitData: any = null;
+
+  const txnResult = await unitRef.transaction((currentUnit) => {
+    if (!currentUnit) return currentUnit;
+    if (currentUnit.status !== 'ISSUE_UNCONFIRMED') {
+      return; // Already dispatched by late scan or otherwise modified - abort transaction
+    }
+
+    const now = Date.now();
+    const expiryEpoch = new Date(currentUnit.expiryDate).getTime();
+    const isExpired = expiryEpoch <= now;
+
+    // Check expiry safety guard (R5): never re-certify an expired unit!
+    if (physicalCheckPassed && !isExpired) {
+      return {
+        ...currentUnit,
+        status: 'Certified',
+        reconciledAt: now,
+        deadlineAt: null,
+        reservedForRequest: null
+      };
+    } else {
+      const discardReason = isExpired && physicalCheckPassed
+        ? 'RECONCILE_EXPIRED: Unit expired while in unconfirmed quarantine'
+        : `RECONCILE_FAILED: ${reason || 'Physical inspection failed or missing'}`;
+      return {
+        ...currentUnit,
+        status: 'Discarded',
+        discardReason,
+        reconciledAt: now,
+        deadlineAt: null,
+        reservedForRequest: null
+      };
+    }
+  });
+
+  if (!txnResult.committed || !txnResult.snapshot.exists()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Reconciliation conflict: Unit is no longer in ISSUE_UNCONFIRMED status (may have been scanned concurrently).'
+    );
+  }
+
+  unitData = txnResult.snapshot.val();
+  finalStatus = unitData.status as ('Certified' | 'Discarded');
+  const now = unitData.reconciledAt || Date.now();
+  const postUpdates: Record<string, any> = {};
+
+  if (finalStatus === 'Certified') {
+    const expiryEpoch = new Date(unitData.expiryDate).getTime();
+    postUpdates[`inventory/fefo/${unitData.bloodGroup}_${unitData.componentType}/${expiryEpoch}_${unitId}`] = true;
+  }
+
+  postUpdates[`audit_logs/units/${unitId}/${now}`] = {
+    unitId,
+    actorUid: auth.uid,
+    action: finalStatus === 'Certified' ? 'UNIT_RECONCILED_CERTIFIED' : 'UNIT_RECONCILED_DISCARDED',
+    status: finalStatus,
+    timestamp: now,
+    details: unitData.discardReason || reason || (finalStatus === 'Certified' ? 'Physical cold chain verified intact.' : 'Discarded upon physical inspection.')
+  };
+
+  await db.ref().update(postUpdates);
+  return { success: true, status: finalStatus };
+});
+
+/**
+ * -------------------------------------------------------------
+ * ROUTINE & URGENT TIERED DISPATCH (Milestone 3)
+ * -------------------------------------------------------------
+ */
+
+// 8. Urgent Atomic FCFS Slot Claiming (claimUrgentSlot)
+export const claimUrgentSlot = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const donorUid = auth.uid;
+  const { requestId } = request.data || {};
+  if (!requestId) throw new functions.https.HttpsError('invalid-argument', 'Request ID required.');
+
+  // Fetch requisition details (check direct requisition or transactions/donation_request)
+  let requisition: any = null;
+
+  const directSnap = await db.ref(`blood_requests/${requestId}`).get();
+  if (directSnap.exists()) {
+    requisition = directSnap.val();
+  } else {
+    // Search in transactions/donation_request
+    const txSnap = await db.ref('transactions/donation_request').get();
+    if (txSnap.exists()) {
+      txSnap.forEach(campChild => {
+        if (campChild.hasChild(requestId)) {
+          requisition = campChild.child(requestId).val();
+        }
+      });
+    }
+  }
+
+  if (!requisition) throw new functions.https.HttpsError('not-found', 'Blood requisition not found.');
+
+  // Guard against claims on closed or cancelled requisitions
+  if (requisition.status === 'Closed' || requisition.status === 'Unfulfilled' || requisition.status === 'Cancelled') {
+    throw new functions.https.HttpsError('failed-precondition', `Cannot claim slot: Requisition is in status '${requisition.status}'.`);
+  }
+
+  // Re-verify donor qualification: cooldown, active group, and verified identity
+  const userSnap = await db.ref(`users/${donorUid}`).get();
+  const donor = userSnap.val() || {};
+
+  if (donor.role !== 'Donor' && donor.role !== 'User') {
+    throw new functions.https.HttpsError('permission-denied', 'Only registered donors can claim emergency donation slots.');
+  }
+
+  if (donor.medical_referral === 'DEFERRED' || donor.isDeferred === true) {
+    throw new functions.https.HttpsError('failed-precondition', 'Donor is medically deferred from blood donation.');
+  }
+
+  if (!donor.bloodGroup) throw new functions.https.HttpsError('failed-precondition', 'Donor blood group not registered.');
+
+  const componentType: BloodComponentType = requisition.componentType || 'WholeBlood';
+  const recipientGroup = requisition.patientBloodGroup || requisition.blood_groupId || requisition.bloodGroup;
+  const isCompatible = recipientGroup ? isBloodCompatible(donor.bloodGroup, recipientGroup, componentType) : true;
+  if (!isCompatible) {
+    throw new functions.https.HttpsError('failed-precondition', 'Donor blood group is incompatible with recipient.');
+  }
+
+  // Double-lock Step 1: Secure an atomic, time-limited lease lock on active_donor_matches/{uid}
+  const now = Date.now();
+  const leaseDurationMs = 2 * 60 * 60 * 1000; // 2 hour dispatch lease
+  const donorLockRef = db.ref(`active_donor_matches/${donorUid}`);
+
+  let acquiredLock = false;
+  const lockTx = await donorLockRef.transaction((current) => {
+    // If donor has an active commitment to another requisition, abort
+    if (current && current.requestId !== requestId) {
+      // If lease expired, permit claim; otherwise, lock stands
+      const isLeaseActive = current.leaseExpiresAt ? current.leaseExpiresAt > now : (current.status === 'CLAIMED' || current.status === 'MATCHED' || current.status === 'EN_ROUTE');
+      if (isLeaseActive) {
+        return; // Actively locked
+      }
+    }
+    acquiredLock = true;
+    return {
+      requestId,
+      status: 'CLAIMED',
+      claimedAt: now,
+      leaseExpiresAt: now + leaseDurationMs
+    };
+  });
+
+  if (!lockTx.committed || !acquiredLock) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Donor currently has an active commitment to another requisition.'
+    );
+  }
+
+  // Double-lock Step 2: Atomic transaction on /urgent_claims/{requestId}
+  const claimsRef = db.ref(`urgent_claims/${requestId}`);
+  let claimDisposition: string = 'CONFIRMED';
+  let slotNumber = 0;
+
+  try {
+    let attempts = 0;
+    while (attempts < 5) {
+      attempts++;
+      try {
+        const claimsTx = await claimsRef.transaction((current) => {
+          const unitsNeeded = requisition.unitsNeeded || 1;
+          // Cap max claimable slots at ceil(unitsNeeded / 0.8) to account for deferrals
+          const maxSlots = Math.ceil(unitsNeeded / 0.8);
+
+          if (!current) {
+            current = {
+              requestId,
+              unitsNeeded,
+              maxSlots,
+              slotsClaimed: 0,
+              claimants: {}
+            };
+          }
+
+          current.claimants = current.claimants || {};
+
+          // Idempotency: if this donor already claimed, return existing status
+          if (current.claimants[donorUid]) {
+            return current;
+          }
+
+          if (current.slotsClaimed < maxSlots) {
+            current.slotsClaimed = (current.slotsClaimed || 0) + 1;
+            slotNumber = current.slotsClaimed;
+            claimDisposition = 'CONFIRMED';
+            current.claimants[donorUid] = {
+              uid: donorUid,
+              status: 'CONFIRMED',
+              slotNumber,
+              claimedAt: now
+            };
+          } else {
+            claimDisposition = 'STANDBY';
+            current.claimants[donorUid] = {
+              uid: donorUid,
+              status: 'STANDBY',
+              claimedAt: now
+            };
+          }
+
+          return current;
+        });
+
+        if (claimsTx.committed) {
+          break;
+        }
+      } catch (txErr) {
+        // Retry
+      }
+
+      if (attempts >= 5) {
+        // Under extreme contention beyond retries, automatically treat donor as STANDBY (zero rejection policy)
+        claimDisposition = 'STANDBY';
+        break;
+      }
+      await new Promise(r => setTimeout(r, 25 + Math.random() * 50));
+    }
+  } catch (err: any) {
+    // If any unexpected error occurred, gracefully fallback to STANDBY rather than throwing an error to the donor
+    claimDisposition = 'STANDBY';
+  }
+
+  // Resolve collection facility destination
+  const hospitalSnap = await db.ref(`masters/hospital/${requisition.hospitalId}`).get();
+  const allHospitalsSnap = await db.ref('masters/hospital').get();
+  const hospital = hospitalSnap.val() || { hospitalId: requisition.hospitalId };
+  const allHospitals = allHospitalsSnap.val() || {};
+
+  let targetFacility: any = null;
+  try {
+    targetFacility = resolveCollectionDestination(hospital, allHospitals);
+  } catch (routingErr: any) {
+    targetFacility = {
+      destinationId: requisition.hospitalId,
+      destinationType: 'HOSPITAL_COLLECTION_CENTRE',
+      isBSC: false
+    };
+  }
+
+  // If standby, register in standby pool
+  if (claimDisposition === 'STANDBY') {
+    await db.ref(`standby_pools/${requestId}/${donorUid}`).set({
+      uid: donorUid,
+      registeredAt: now,
+      bloodGroup: donor.bloodGroup
+    });
+  }
+
+  // Update donor match record
+  await db.ref(`active_donor_matches/${donorUid}`).update({
+    disposition: claimDisposition,
+    destination: targetFacility
+  });
+
+  return {
+    success: true,
+    disposition: claimDisposition,
+    slotNumber: claimDisposition === 'CONFIRMED' ? slotNumber : null,
+    destination: targetFacility
+  };
+});
+
+/**
+ * -------------------------------------------------------------
+ * BLOOD DRIVES & BATCH MANIFESTS (Milestone 5)
+ * -------------------------------------------------------------
+ */
+
+// 9. Submit Transfer Manifest (Coordinator dispatches sealed batch)
+export const submitTransferManifest = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const { campId, driveId, bagBarcodes } = request.data || {};
+  if (!campId || !bagBarcodes || !Array.isArray(bagBarcodes) || bagBarcodes.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'campId and non-empty bagBarcodes array required.');
+  }
+
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  const callerProfile = userSnap.val() || {};
+  if (callerProfile.role !== 'Admin' && callerProfile.campId !== campId && callerProfile.role !== 'CampCoordinator' && callerProfile.role !== 'Manager') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Camp Coordinators or Admins can submit transfer manifests.');
+  }
+
+  const manifestRef = db.ref('transfer_manifests').push();
+  const manifestId = manifestRef.key as string;
+  const now = Date.now();
+
+  const manifestData = {
+    manifestId,
+    campId,
+    driveId: driveId || campId,
+    bagBarcodes,
+    totalBags: bagBarcodes.length,
+    status: 'IN_TRANSIT',
+    dispatchedAt: now,
+    dispatchedBy: auth.uid,
+    dispatchedByName: callerProfile.name || 'Coordinator'
+  };
+
+  const updates: Record<string, any> = {};
+  updates[`transfer_manifests/${manifestId}`] = manifestData;
+
+  for (const barcode of bagBarcodes) {
+    updates[`inventory/units/${barcode}/transferManifestId`] = manifestId;
+    updates[`inventory/units/${barcode}/status`] = 'IN_TRANSIT';
+    updates[`inventory/units/${barcode}/updatedAt`] = now;
+  }
+
+  await db.ref().update(updates);
+
+  await logAudit(
+    manifestId,
+    auth.uid,
+    callerProfile.name || 'Coordinator',
+    'SUBMIT_TRANSFER_MANIFEST',
+    'Success',
+    null,
+    undefined,
+    undefined,
+    `Batch manifest submitted with ${bagBarcodes.length} blood bags from camp ${campId}`
+  );
+
+  return { success: true, manifestId, totalBags: bagBarcodes.length };
+});
+
+// 10. Receive Batch Manifest (Storage Officer verifies batch arrival)
+export const receiveBatchManifest = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const { manifestId, scannedBarcodes } = request.data || {};
+  if (!manifestId || !scannedBarcodes || !Array.isArray(scannedBarcodes)) {
+    throw new functions.https.HttpsError('invalid-argument', 'manifestId and scannedBarcodes array required.');
+  }
+
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  const callerProfile = userSnap.val() || {};
+  if (callerProfile.role !== 'Admin' && callerProfile.role !== 'Storage') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admins can receive transfer manifests.');
+  }
+
+  const manifestSnap = await db.ref(`transfer_manifests/${manifestId}`).get();
+  if (!manifestSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'Transfer manifest not found.');
+  }
+
+  const manifest = manifestSnap.val();
+  const expectedBarcodes = new Set<string>(manifest.bagBarcodes || []);
+  const receivedSet = new Set<string>(scannedBarcodes);
+
+  const missingBarcodes: string[] = [];
+  for (const barcode of expectedBarcodes) {
+    if (!receivedSet.has(barcode)) {
+      missingBarcodes.push(barcode);
+    }
+  }
+
+  const unmanifestedBarcodes: string[] = [];
+  for (const barcode of scannedBarcodes) {
+    if (!expectedBarcodes.has(barcode)) {
+      unmanifestedBarcodes.push(barcode);
+    }
+  }
+
+  const hasDiscrepancy = missingBarcodes.length > 0 || unmanifestedBarcodes.length > 0;
+  const status = hasDiscrepancy ? 'RECEIVED_WITH_DISCREPANCY' : 'RECEIVED_VERIFIED';
+  const now = Date.now();
+
+  const updates: Record<string, any> = {};
+  updates[`transfer_manifests/${manifestId}/status`] = status;
+  updates[`transfer_manifests/${manifestId}/receivedAt`] = now;
+  updates[`transfer_manifests/${manifestId}/receivedBy`] = auth.uid;
+  updates[`transfer_manifests/${manifestId}/receivedByName`] = callerProfile.name || 'Storage Officer';
+  updates[`transfer_manifests/${manifestId}/missingBarcodes`] = missingBarcodes;
+  updates[`transfer_manifests/${manifestId}/unmanifestedBarcodes`] = unmanifestedBarcodes;
+
+  // Move scanned units into Quarantine status awaiting lab certification
+  for (const barcode of scannedBarcodes) {
+    updates[`inventory/units/${barcode}/status`] = 'Quarantined';
+    updates[`inventory/units/${barcode}/receivedAt`] = now;
+    updates[`inventory/units/${barcode}/updatedAt`] = now;
+  }
+
+  await db.ref().update(updates);
+
+  await logAudit(
+    manifestId,
+    auth.uid,
+    callerProfile.name || 'Storage Officer',
+    'RECEIVE_BATCH_MANIFEST',
+    'Success',
+    null,
+    undefined,
+    undefined,
+    `Manifest ${manifestId} received with status ${status}. Scanned: ${scannedBarcodes.length}, Missing: ${missingBarcodes.length}, Extra: ${unmanifestedBarcodes.length}`
+  );
+
+  return {
+    success: true,
+    status,
+    scannedCount: scannedBarcodes.length,
+    missingBarcodes,
+    unmanifestedBarcodes
+  };
+});
+
+// 11. Chunked Bulk Certification (Negative Filter Invariant DEC-005 / DEC-015)
+export const bulkCertifyBatch = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const { manifestId, labResults } = request.data || {};
+  if (!manifestId || !labResults) {
+    throw new functions.https.HttpsError('invalid-argument', 'manifestId and labResults required.');
+  }
+
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  const callerProfile = userSnap.val() || {};
+  if (callerProfile.role !== 'Admin' && callerProfile.role !== 'Storage') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Storage Officers or Admins can certify batches.');
+  }
+
+  const resultsList: Array<{
+    unitId: string;
+    serologyNegative: boolean;
+    componentType?: string;
+    bloodGroup?: string;
+    expiryEpoch?: number;
+  }> = Array.isArray(labResults)
+    ? labResults
+    : Object.keys(labResults).map(unitId => ({ unitId, ...labResults[unitId] }));
+
+  if (resultsList.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'labResults cannot be empty.');
+  }
+
+  const now = Date.now();
+  let certifiedCount = 0;
+  let discardedCount = 0;
+
+  // Process in idempotent chunks of up to 50
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < resultsList.length; i += CHUNK_SIZE) {
+    const chunk = resultsList.slice(i, i + CHUNK_SIZE);
+    const updates: Record<string, any> = {};
+
+    for (const item of chunk) {
+      const { unitId, serologyNegative } = item;
+      let { componentType, bloodGroup, expiryEpoch } = item;
+
+      // If unit attributes missing from payload, fetch from DB
+      if (!componentType || !bloodGroup || !expiryEpoch) {
+        const unitSnap = await db.ref(`inventory/units/${unitId}`).get();
+        if (unitSnap.exists()) {
+          const uVal = unitSnap.val();
+          componentType = componentType || uVal.componentType || 'WholeBlood';
+          bloodGroup = bloodGroup || uVal.bloodGroup;
+          expiryEpoch = expiryEpoch || (uVal.expiryDate ? new Date(uVal.expiryDate).getTime() : now + 35 * 86400000);
+        }
+      }
+
+      if (serologyNegative === true) {
+        certifiedCount++;
+        updates[`inventory/units/${unitId}/status`] = 'Certified';
+        updates[`inventory/units/${unitId}/certifiedAt`] = now;
+        updates[`inventory/units/${unitId}/certifiedBy`] = auth.uid;
+        updates[`inventory/units/${unitId}/updatedAt`] = now;
+        if (bloodGroup && componentType && expiryEpoch) {
+          updates[`inventory/fefo/${bloodGroup}_${componentType}/${expiryEpoch}_${unitId}`] = true;
+        }
+      } else {
+        discardedCount++;
+        updates[`inventory/units/${unitId}/status`] = 'Discarded';
+        updates[`inventory/units/${unitId}/discardReason`] = 'SEROLOGY_REACTIVE';
+        updates[`inventory/units/${unitId}/discardedAt`] = now;
+        updates[`inventory/units/${unitId}/discardedBy`] = auth.uid;
+        updates[`inventory/units/${unitId}/updatedAt`] = now;
+      }
+    }
+
+    await db.ref().update(updates);
+  }
+
+  // Update manifest status to PROCESSED
+  await db.ref(`transfer_manifests/${manifestId}`).update({
+    certifiedAt: now,
+    certifiedBy: auth.uid,
+    certifiedCount,
+    discardedCount,
+    status: 'PROCESSED'
+  });
+
+  await logAudit(
+    manifestId,
+    auth.uid,
+    callerProfile.name || 'Storage Officer',
+    'BULK_CERTIFY_BATCH',
+    'Success',
+    null,
+    undefined,
+    undefined,
+    `Batch ${manifestId} certified: ${certifiedCount} units certified to FEFO, ${discardedCount} discarded.`
+  );
+
+  return {
+    success: true,
+    certifiedCount,
+    discardedCount,
+    totalProcessed: resultsList.length
+  };
+});
+
+// 12. Record Transfusion Impact (DPDP Act §8 Privacy Compliant Donor Notification)
+export const recordTransfusionImpact = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const { unitId, city } = request.data || {};
+  if (!unitId) throw new functions.https.HttpsError('invalid-argument', 'unitId required.');
+
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  const callerProfile = userSnap.val() || {};
+  if (callerProfile.role !== 'Admin' && callerProfile.role !== 'Hospital' && callerProfile.role !== 'Storage') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Hospital, Storage, or Admin staff can record transfusion impact.');
+  }
+
+  // Lookup unit in inventory/units
+  const unitSnap = await db.ref(`inventory/units/${unitId}`).get();
+  if (!unitSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'Unit not found in inventory.');
+  }
+
+  const unitData = unitSnap.val();
+  const donorUid = unitData.donorUid || unitData.donorId;
+  const now = Date.now();
+
+  if (donorUid) {
+    // DPDP Act §8 Privacy Compliant: only city and general impact message, zero patient or medical diagnosis data
+    const impactRef = db.ref(`donor_transfusion_impacts/${donorUid}`).push();
+    const impactId = impactRef.key as string;
+    await impactRef.set({
+      impactId,
+      unitId,
+      donationId: unitData.donationId || null,
+      transfusedAt: now,
+      city: city || 'Local District Hospital',
+      message: 'Your donated blood was successfully transfused and saved a life!'
+    });
+  }
+
+  // Update unit status to Transfused
+  await db.ref(`inventory/units/${unitId}`).update({
+    status: 'Transfused',
+    transfusedAt: now,
+    transfusedCity: city || 'Local District Hospital'
+  });
+
+  return {
+    success: true,
+    unitId,
+    notifiedDonor: Boolean(donorUid)
+  };
+});
+
+/**
+ * -------------------------------------------------------------
+ * COMMUNITY SOS APPEAL (Milestone 6)
+ * -------------------------------------------------------------
+ */
+
+// 13. Authorize Community SOS Appeal (Medical Officer Gate, 2h TTL 128-bit token)
+export const authorizeCommunitySOS = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated.');
+
+  const db = admin.database();
+  const { requestId } = request.data || {};
+  if (!requestId) throw new functions.https.HttpsError('invalid-argument', 'requestId required.');
+
+  const userSnap = await db.ref(`users/${auth.uid}`).get();
+  const callerProfile = userSnap.val() || {};
+
+  // MO authorization gate: Admin, Hospital, or Medical Officer
+  const isAuthorizedRole = callerProfile.role === 'Admin' || callerProfile.role === 'Hospital' || callerProfile.isMedicalOfficer === true;
+  if (!isAuthorizedRole) {
+    throw new functions.https.HttpsError('permission-denied', 'Only authorized Medical Officers or Admins can trigger a Community SOS appeal.');
+  }
+
+  // Fetch requisition
+  let requisition: any = null;
+  const directSnap = await db.ref(`blood_requests/${requestId}`).get();
+  if (directSnap.exists()) {
+    requisition = directSnap.val();
+  } else {
+    const txSnap = await db.ref('transactions/donation_request').get();
+    if (txSnap.exists()) {
+      txSnap.forEach(campChild => {
+        if (campChild.hasChild(requestId)) {
+          requisition = campChild.child(requestId).val();
+        }
+      });
+    }
+  }
+
+  if (!requisition) throw new functions.https.HttpsError('not-found', 'Blood requisition not found.');
+
+  // Check urgency or unfulfilled status
+  const isUrgent = requisition.urgency === 'Critical' || requisition.urgency === 'Urgent';
+  if (!isUrgent && requisition.status !== 'Registered') {
+    throw new functions.https.HttpsError('failed-precondition', 'Community SOS appeals are strictly reserved for Urgent or Critical blood requisitions.');
+  }
+
+  // Generate 128-bit crypto token
+  const token = crypto.randomBytes(16).toString('hex');
+  const now = Date.now();
+  const expiresAt = now + (2 * 60 * 60 * 1000); // 2 hour TTL
+
+  const sosData = {
+    token,
+    requestId,
+    campId: requisition.campId || 'CAMP_MAIN',
+    bloodGroup: requisition.patientBloodGroup || requisition.blood_groupId || requisition.bloodGroup,
+    componentType: requisition.componentType || 'WholeBlood',
+    unitsNeeded: requisition.unitsNeeded || 1,
+    authorizedBy: auth.uid,
+    authorizedByName: callerProfile.name || 'Medical Officer',
+    authorizedAt: now,
+    expiresAt,
+    active: true,
+    pledgeCount: 0
+  };
+
+  await db.ref(`sos_links/${token}`).set(sosData);
+
+  await logAudit(
+    requestId,
+    auth.uid,
+    callerProfile.name || 'Medical Officer',
+    'AUTHORIZE_COMMUNITY_SOS',
+    'Success',
+    null,
+    undefined,
+    undefined,
+    `Community SOS appeal authorized by Medical Officer. Token expires in 2 hours.`
+  );
+
+  return {
+    success: true,
+    token,
+    expiresAt,
+    shareUrl: `https://cap23-blood-donation.web.app/sos/${token}`
+  };
+});
+
+// 14. Submit Public Volunteer Pledge (Anti-DoS Capped Walk-in Registry)
+export const submitPublicVolunteerPledge = functions.https.onCall(async (request) => {
+  const db = admin.database();
+  const { token, volunteerName, phone, bloodGroup } = request.data || {};
+
+  if (!token || !volunteerName || !phone) {
+    throw new functions.https.HttpsError('invalid-argument', 'token, volunteerName, and phone are required.');
+  }
+
+  const sosSnap = await db.ref(`sos_links/${token}`).get();
+  if (!sosSnap.exists()) {
+    throw new functions.https.HttpsError('not-found', 'SOS appeal link is invalid or does not exist.');
+  }
+
+  const sosData = sosSnap.val();
+  const now = Date.now();
+
+  if (!sosData.active || now > sosData.expiresAt) {
+    throw new functions.https.HttpsError('deadline-exceeded', 'This Community SOS appeal link has expired.');
+  }
+
+  // Anti-DoS Volunteer Cap: Max 3x unitsNeeded
+  const unitsNeeded = sosData.unitsNeeded || 1;
+  const maxPledges = unitsNeeded * 3;
+
+  const pledgeCountRef = db.ref(`sos_links/${token}/pledgeCount`);
+  let capacityReached = false;
+
+  const txnResult = await pledgeCountRef.transaction((count) => {
+    const current = (typeof count === 'number') ? count : 0;
+    if (current >= maxPledges) {
+      capacityReached = true;
+      return; // abort tx
+    }
+    return current + 1;
+  });
+
+  if (capacityReached || !txnResult.committed) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'Pledge capacity for this emergency has been fulfilled. Thank you for your willingness to help!'
+    );
+  }
+
+  const currentPledgeCount = txnResult.snapshot.val();
+
+  // Mask phone for privacy (DPDP Act) - e.g. +91******1234
+  const maskedPhone = phone.length > 4
+    ? phone.slice(0, 2) + '*'.repeat(phone.length - 6) + phone.slice(-4)
+    : phone;
+
+  const pledgeRef = db.ref(`public_volunteers/${sosData.requestId}`).push();
+  const pledgeId = pledgeRef.key as string;
+
+  await pledgeRef.set({
+    pledgeId,
+    token,
+    requestId: sosData.requestId,
+    volunteerName,
+    phone: maskedPhone,
+    bloodGroup: bloodGroup || 'Unknown',
+    pledgedAt: now,
+    status: 'PLEDGED'
+  });
+
+  // CRITICAL INVARIANT: Public volunteer pledge does NOT decrement clinical unitsNeeded!
+
+  return {
+    success: true,
+    pledgeId,
+    pledgeNumber: currentPledgeCount,
+    message: 'Thank you for your pledge! Please report to the nearest blood bank.'
+  };
+});

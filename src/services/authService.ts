@@ -1,6 +1,7 @@
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  sendPasswordResetEmail,
   signOut
 } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
@@ -23,6 +24,18 @@ export const login = async (email: string, pass: string) => {
       return { user: null, error: message };
     }
     return { user: null, error: 'An unexpected error occurred.' };
+  }
+};
+
+export const resetPassword = async (email: string) => {
+  try {
+    await sendPasswordResetEmail(auth, email);
+    return { success: true, error: null };
+  } catch (error) {
+    if (error instanceof FirebaseError) {
+      return { success: false, error: error.message };
+    }
+    return { success: false, error: 'Failed to send password reset email.' };
   }
 };
 

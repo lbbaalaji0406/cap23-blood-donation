@@ -4,7 +4,7 @@ import type { User } from 'firebase/auth';
 import { ref, onValue } from 'firebase/database';
 import { auth, db } from '../firebase';
 
-export type Role = 'Admin' | 'Manager' | 'Donor' | 'Hospital' | 'User';
+export type Role = 'Admin' | 'Manager' | 'Donor' | 'Hospital' | 'Storage' | 'User';
 
 export interface UserProfile {
   email: string;
@@ -41,6 +41,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
+        setLoading(true);
         
         // Fetch user profile from RTDB with retry logic to handle auth token propagation races
         const userRef = ref(db, `users/${firebaseUser.uid}`);

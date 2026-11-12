@@ -9,6 +9,8 @@ import { useAuth } from '../../contexts/AuthProvider';
 const statusColors: Record<string, string> = {
   Registered: 'bg-amber-100 text-amber-800',
   Verified: 'bg-cyan-100 text-cyan-800',
+  'Pending Response': 'bg-purple-100 text-purple-800',
+  'Partially Matched': 'bg-orange-100 text-orange-800',
   Matched: 'bg-indigo-100 text-indigo-800',
   Donated: 'bg-emerald-100 text-emerald-800',
   Closed: 'bg-slate-100 text-slate-800',
@@ -60,11 +62,33 @@ export const RequestList = () => {
     fetchData();
   }, [profile]);
 
-  const filteredRequests = requests.filter(req => {
-    if (filterCamp && req.campId !== filterCamp) return false;
-    if (filterStatus && req.status !== filterStatus) return false;
-    return true;
-  });
+  const urgencyWeight: Record<string, number> = {
+    Critical: 1,
+    Urgent: 2,
+    Routine: 3,
+  };
+
+  const filteredRequests = requests
+    .filter(req => {
+      if (filterCamp && req.campId !== filterCamp) return false;
+      if (filterStatus && req.status !== filterStatus) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      // Prioritize active non-terminal requests
+      const isTerminalA = a.status === 'Closed' || a.status === 'Donated' || a.status === 'Unfulfilled';
+      const isTerminalB = b.status === 'Closed' || b.status === 'Donated' || b.status === 'Unfulfilled';
+      if (!isTerminalA && isTerminalB) return -1;
+      if (isTerminalA && !isTerminalB) return 1;
+
+      // Priority sort by urgency (Critical > Urgent > Routine)
+      const uA = urgencyWeight[a.urgency || 'Routine'] || 3;
+      const uB = urgencyWeight[b.urgency || 'Routine'] || 3;
+      if (uA !== uB) return uA - uB;
+
+      // Secondary sort: newest first
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
 
   if (loading) return <div className="p-6">Loading...</div>;
 
@@ -140,8 +164,23 @@ export const RequestList = () => {
               {filteredRequests.map((req) => (
                 <tr key={req.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-slate-900">{req.recipientName}</div>
-                    <div className="text-xs text-slate-500">{req.unitsNeeded} units • {req.urgency}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-medium text-slate-900">{req.recipientName}</div>
+                      {req.urgency === 'Critical' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
+                          CRITICAL
+                        </span>
+                      )}
+                      {req.urgency === 'Urgent' && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                          URGENT
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      {req.unitsNeeded} units needed • {req.componentType || 'WholeBlood'}
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">

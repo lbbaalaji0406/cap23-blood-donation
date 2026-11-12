@@ -13,6 +13,7 @@ export interface DonationRequest {
   componentType?: 'WholeBlood' | 'Platelets' | 'Plasma';
   unitsNeeded: number;
   unitsSecured?: number;
+  unitsCollected?: number;
   urgency: UrgencyLevel;
   status: RequestStatus;
   notes?: string;
@@ -109,9 +110,11 @@ export const requestService = {
       // CREATE flow
       const requestsRef = ref(database, `transactions/donation_request/${targetCampId}`);
       const newRef = push(requestsRef);
+      const generatedRequestId = newRef.key as string;
       
       const newRequest = {
         ...payload,
+        requestId: generatedRequestId,
         componentType: payload.componentType || 'WholeBlood',
         status: 'Registered',
         createdBy: uid,
@@ -123,6 +126,15 @@ export const requestService = {
       delete newRequest.campId;
       
       await set(newRef, newRequest);
+
+      // Two-way sync: If request was created on behalf of a hospital, index under hospital_requests
+      if (payload.recipientHospitalId && generatedRequestId) {
+        const hospitalRequestRef = ref(database, `hospital_requests/${payload.recipientHospitalId}/${generatedRequestId}`);
+        await set(hospitalRequestRef, {
+          ...newRequest,
+          campId: targetCampId
+        });
+      }
     } else {
       // EDIT flow
       const requestRef = ref(database, `transactions/donation_request/${targetCampId}/${id}`);
@@ -137,6 +149,12 @@ export const requestService = {
       updatePayload.updatedAt = serverTimestamp() as any;
 
       await update(requestRef, updatePayload);
+
+      // Two-way sync: Update hospital index if present
+      if (payload.recipientHospitalId) {
+        const hospitalRequestRef = ref(database, `hospital_requests/${payload.recipientHospitalId}/${id}`);
+        await update(hospitalRequestRef, updatePayload);
+      }
     }
   }
 };

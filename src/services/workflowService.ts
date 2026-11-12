@@ -47,6 +47,28 @@ export const workflowService = {
       console.error("Update status failed:", error);
       throw new Error(error.message || "Status transition denied.");
     }
+  },
+
+  respondToMatch: async (
+    campId: string,
+    requestId: string,
+    donorUid: string,
+    response: 'accept' | 'decline'
+  ): Promise<any> => {
+    try {
+      const processWorkflowState = httpsCallable(functions, 'processWorkflowState');
+      const result = await processWorkflowState({
+        action: 'RESPOND_TO_MATCH',
+        campId,
+        requestId,
+        donorUid,
+        response
+      });
+      return result.data;
+    } catch (error: any) {
+      console.error(`Respond to match (${response}) failed:`, error);
+      throw new Error(error.message || `Failed to ${response} match request.`);
+    }
   }
 };
 

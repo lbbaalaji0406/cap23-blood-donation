@@ -30,6 +30,11 @@ dist-ssr
 .secret.local
 functions/.secret.local
 
+# Database dumps & scratch files (PII / DPDP compliance)
+*dump*.json
+prod_db*.json
+claude_*.txt
+
 # firebase
 .firebase/
 firebase-debug.log

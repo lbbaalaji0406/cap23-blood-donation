@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthProvider';
 import { workflowService } from '../../services/workflowService';
 import { db } from '../../firebase';
 import { ref, get } from 'firebase/database';
+import { Activity, CheckCircle2, X } from 'lucide-react';
 
 import { CommentsThread } from './CommentsThread';
 import { AttachmentsList } from './AttachmentsList';
@@ -25,6 +26,10 @@ export const RequestDetail = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
+  const [donorMatchStatus, setDonorMatchStatus] = useState<'none' | 'pending_response' | 'accepted' | 'declined'>('none');
+  const [respondingMatch, setRespondingMatch] = useState(false);
+  const [donorActionMsg, setDonorActionMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  
   const [camps, setCamps] = useState<Record<string, Camp>>({});
   const [hospitals, setHospitals] = useState<Record<string, Hospital>>({});
   const [bloodGroups, setBloodGroups] = useState<Record<string, BloodGroup>>({});
@@ -35,11 +40,33 @@ export const RequestDetail = () => {
   const [donorUidToMatch, setDonorUidToMatch] = useState('');
   const [showMatchPrompt, setShowMatchPrompt] = useState(false);
   
+  interface AvailableDonor {
+    uid: string;
+    name: string;
+    email: string;
+    bloodGroup: string;
+    bloodGroupName: string;
+    bloodGroupVerified: boolean;
+    isCompatible: boolean;
+  }
+  const [availableDonors, setAvailableDonors] = useState<AvailableDonor[]>([]);
+  const [loadingDonorsList, setLoadingDonorsList] = useState(false);
+  const [customUidMode, setCustomUidMode] = useState(false);
+  
   const [showDonatedPrompt, setShowDonatedPrompt] = useState(false);
   const [donatedVolume, setDonatedVolume] = useState(1);
   const [matchedDonorProfile, setMatchedDonorProfile] = useState<any>(null);
   const [loadingDonor, setLoadingDonor] = useState(false);
   const [confirmedBloodGroup, setConfirmedBloodGroup] = useState('');
+
+  interface MatchedDonorInfo {
+    uid: string;
+    status: string;
+    name?: string;
+    email?: string;
+    bloodGroup?: string;
+  }
+  const [matchedDonors, setMatchedDonors] = useState<MatchedDonorInfo[]>([]);
 
   const fetchAll = async () => {
     try {
@@ -61,6 +88,62 @@ export const RequestDetail = () => {
       setHospitals(hData);
       setBloodGroups(bgData);
       setRequest(req);
+
+      // Fetch matches subcollection
+      try {
+        const matchesSnap = await get(ref(db, `matches/${id}`));
+        if (matchesSnap.exists()) {
+          const list: MatchedDonorInfo[] = [];
+          const entries = Object.entries<any>(matchesSnap.val());
+          for (const [mUid, mData] of entries) {
+            let uName = 'Donor';
+            let uEmail = '';
+            let uBg = '';
+            try {
+              const uSnap = await get(ref(db, `users/${mUid}`));
+              if (uSnap.exists()) {
+                const uVal = uSnap.val();
+                uName = uVal.name || 'Donor';
+                uEmail = uVal.email || '';
+                uBg = uVal.bloodGroup || '';
+              }
+            } catch (err) {
+              console.error('Error fetching donor user:', err);
+            }
+            list.push({
+              uid: mUid,
+              status: mData.status,
+              name: uName,
+              email: uEmail,
+              bloodGroup: uBg
+            });
+          }
+          setMatchedDonors(list);
+        } else {
+          setMatchedDonors([]);
+        }
+      } catch (e) {
+        console.error('Error fetching matches:', e);
+      }
+
+      if (profile?.role === 'Donor' && user?.uid && id) {
+        try {
+          const matchSnap = await get(ref(db, `matches/${id}/${user.uid}`));
+          if (matchSnap.exists()) {
+            const m = matchSnap.val();
+            setDonorMatchStatus(m.status || 'pending_response');
+          } else {
+            const activeSnap = await get(ref(db, `active_donor_matches/${user.uid}`));
+            if (activeSnap.exists() && activeSnap.val().requestId === id) {
+              setDonorMatchStatus('pending_response');
+            } else {
+              setDonorMatchStatus('none');
+            }
+          }
+        } catch (e) {
+          console.error("Error reading match status for donor:", e);
+        }
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Access Denied or Failed to load request.');
@@ -69,36 +152,141 @@ export const RequestDetail = () => {
     }
   };
 
+  const handleDonorResponse = async (response: 'accept' | 'decline') => {
+    if (!id || !campId || !user?.uid) return;
+    setRespondingMatch(true);
+    setDonorActionMsg(null);
+    try {
+      await workflowService.respondToMatch(campId, id, user.uid, response);
+      setDonorMatchStatus(response === 'accept' ? 'accepted' : 'declined');
+      setDonorActionMsg({
+        type: 'success',
+        text: response === 'accept' 
+          ? 'Thank you! You have confirmed your donation match.' 
+          : 'You have declined this match. Your match reservation has been released.'
+      });
+      await fetchAll();
+    } catch (err: any) {
+      setDonorActionMsg({
+        type: 'error',
+        text: err.message || `Failed to ${response} match.`
+      });
+    } finally {
+      setRespondingMatch(false);
+    }
+  };
+
   useEffect(() => {
     fetchAll();
   }, [id, campId]);
 
+  const fetchAvailableDonors = async () => {
+    if (!request) return;
+    setLoadingDonorsList(true);
+    try {
+      // 1. Fetch universal donors from users
+      const snap = await get(ref(db, 'users'));
+
+      // 2. Fetch existing matches for this request and global active locks
+      const [matchesSnap, activeLocksSnap] = await Promise.all([
+        get(ref(db, `matches/${request.id}`)),
+        get(ref(db, 'active_donor_matches'))
+      ]);
+
+      const requestMatches = matchesSnap.exists() ? matchesSnap.val() : {};
+      const activeLocks = activeLocksSnap.exists() ? activeLocksSnap.val() : {};
+
+      if (snap.exists()) {
+        const usersObj = snap.val();
+        const compatibleGroups = getCompatibleDonorGroups(request.blood_groupId, request.componentType);
+        const list: AvailableDonor[] = [];
+
+        for (const [uid, u] of Object.entries<any>(usersObj)) {
+          if (u.role === 'Donor') {
+            // Check if donor is already matched/accepted/donated for this request
+            const existingMatch = requestMatches[uid];
+            if (existingMatch && (existingMatch.status === 'pending_response' || existingMatch.status === 'accepted' || existingMatch.status === 'donated')) {
+              continue; // Exclude already matched donor
+            }
+
+            // Check if donor has an active lock with another request
+            if (activeLocks[uid] && activeLocks[uid].requestId !== request.id) {
+              continue; // Exclude locked donor
+            }
+
+            const bgKey = u.bloodGroup || '';
+            const bgName = bloodGroups[bgKey]?.name || bloodGroups[bgKey]?.code || bgKey || 'Unknown';
+            list.push({
+              uid,
+              name: u.name || 'Anonymous Donor',
+              email: u.email || '',
+              bloodGroup: bgKey,
+              bloodGroupName: bgName,
+              bloodGroupVerified: !!u.bloodGroupVerified,
+              isCompatible: compatibleGroups.includes(bgKey)
+            });
+          }
+        }
+        list.sort((a, b) => (b.isCompatible ? 1 : 0) - (a.isCompatible ? 1 : 0));
+        setAvailableDonors(list);
+      }
+    } catch (e) {
+      console.error('Error fetching donors list:', e);
+    } finally {
+      setLoadingDonorsList(false);
+    }
+  };
+
+  const handleInitiateDonation = async (donorUid: string) => {
+    setLoadingDonor(true);
+    setShowDonatedPrompt(true);
+    try {
+      const snapshot = await get(ref(db, `users/${donorUid}`));
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        setMatchedDonorProfile({ ...data, uid: donorUid });
+        setConfirmedBloodGroup(data.bloodGroup || '');
+      }
+    } catch (err) {
+      console.error("Failed to fetch donor profile", err);
+    } finally {
+      setLoadingDonor(false);
+    }
+  };
+
   const handleStatusChange = async (newStatus: RequestStatus) => {
     if (!request || !user || !profile || !campId) return;
     
-    // Prevent skipping steps or reverse
-    
-    if (newStatus === 'Matched' && request.status === 'Verified') {
+    if (newStatus === 'Matched' && (request.status === 'Verified' || request.status === 'Partially Matched')) {
       setShowMatchPrompt(true);
+      fetchAvailableDonors();
       return;
     }
 
-    if (newStatus === 'Donated' && request.status === 'Matched') {
-      if (request.matchedDonorId) {
-        setLoadingDonor(true);
-        setShowDonatedPrompt(true);
-        try {
-          const snapshot = await get(ref(db, `users/${request.matchedDonorId}`));
-          if (snapshot.exists()) {
-            const data = snapshot.val();
-            setMatchedDonorProfile(data);
-            setConfirmedBloodGroup(data.bloodGroup || '');
+    if (newStatus === 'Donated' && (request.status === 'Matched' || request.status === 'Partially Matched')) {
+      let donorToUse = request.matchedDonorId;
+      if (!donorToUse) {
+        const accepted = matchedDonors.find(m => m.status === 'accepted');
+        if (accepted) {
+          donorToUse = accepted.uid;
+        } else {
+          try {
+            const matchSnap = await get(ref(db, `matches/${request.id}`));
+            if (matchSnap.exists()) {
+              matchSnap.forEach(child => {
+                if (child.val().status === 'accepted') {
+                  donorToUse = child.key;
+                }
+              });
+            }
+          } catch (e) {
+            console.error(e);
           }
-        } catch (err) {
-          console.error("Failed to fetch donor profile", err);
-        } finally {
-          setLoadingDonor(false);
         }
+      }
+
+      if (donorToUse) {
+        await handleInitiateDonation(donorToUse);
       } else {
         setShowDonatedPrompt(true);
       }
@@ -110,8 +298,8 @@ export const RequestDetail = () => {
       return;
     }
     
-    if (newStatus === 'Closed' && profile.role !== 'Admin') {
-      setError('Only Admins can Close a request.');
+    if (newStatus === 'Closed' && profile.role !== 'Admin' && profile.role !== 'Manager') {
+      setError('Only Camp Managers or Admins can Close a request.');
       return;
     }
 
@@ -152,7 +340,7 @@ export const RequestDetail = () => {
           throw new Error('User is not a Donor.');
         }
 
-        const compatibleDonors = getCompatibleDonorGroups(request.blood_groupId);
+        const compatibleDonors = getCompatibleDonorGroups(request.blood_groupId, request.componentType);
         if (!donorData.bloodGroup || !compatibleDonors.includes(donorData.bloodGroup)) {
           throw new Error(`Donor's blood group (${bloodGroups[donorData.bloodGroup]?.name || 'Unknown'}) is physically INCOMPATIBLE with the recipient's required blood group (${bloodGroups[request.blood_groupId]?.name}).`);
         }
@@ -198,7 +386,7 @@ export const RequestDetail = () => {
         request.id,
         request.status,
         'Donated',
-        request.matchedDonorId,
+        matchedDonorProfile?.uid || request.matchedDonorId,
         donatedVolume,
         confirmedBloodGroup
       );
@@ -229,22 +417,52 @@ export const RequestDetail = () => {
   if (!request) return null;
 
   const currentIndex = statusFlow.indexOf(request.status);
+  const isPartiallyMatched = request.status === 'Partially Matched';
   const isUnfulfilled = request.status === unfulfilledState;
   const isTerminal = request.status === 'Closed' || isUnfulfilled;
 
   // Determine allowed next states based on current state
-  const allowedNextStates: RequestStatus[] = [];
+  const allowedNextStates: { status: RequestStatus; label: string }[] = [];
+  const unitsCollected = request.unitsCollected || 0;
+  const unitsNeeded = request.unitsNeeded || 1;
+  const hasAcceptedDonors = matchedDonors.some(m => m.status === 'accepted');
+
   if (!isTerminal) {
     if (request.status === 'Registered') {
-      allowedNextStates.push('Verified');
-      if (profile?.role === 'Admin') allowedNextStates.push('Unfulfilled');
+      allowedNextStates.push({ status: 'Verified', label: 'Mark as Verified' });
+      if (profile?.role === 'Admin') allowedNextStates.push({ status: 'Unfulfilled', label: 'Mark as Unfulfilled' });
     } else if (request.status === 'Verified') {
-      allowedNextStates.push('Matched');
-      if (profile?.role === 'Admin') allowedNextStates.push('Unfulfilled');
-    } else if (request.status === 'Matched') {
-      allowedNextStates.push('Donated');
+      allowedNextStates.push({ status: 'Matched', label: 'Match Donor' });
+      if (profile?.role === 'Admin') allowedNextStates.push({ status: 'Unfulfilled', label: 'Mark as Unfulfilled' });
+    } else if (request.status === 'Partially Matched' || request.status === 'Matched') {
+      // 1. Can match additional donors if needed units not fully collected
+      if (unitsCollected < unitsNeeded) {
+        allowedNextStates.push({
+          status: 'Matched',
+          label: `Match Additional Donor (${unitsCollected}/${unitsNeeded} Collected)`
+        });
+      }
+      // 2. Can proceed to record donation if there is an accepted donor waiting
+      if (hasAcceptedDonors) {
+        allowedNextStates.push({
+          status: 'Donated',
+          label: `Proceed to Donated (Verify Collection)`
+        });
+      }
+      // 3. If all units collected, can mark as Closed
+      if (unitsCollected >= unitsNeeded && (profile?.role === 'Admin' || profile?.role === 'Manager')) {
+        allowedNextStates.push({ status: 'Closed', label: 'Mark as Closed' });
+      }
     } else if (request.status === 'Donated') {
-      if (profile?.role === 'Admin') allowedNextStates.push('Closed');
+      if (unitsCollected < unitsNeeded) {
+        allowedNextStates.push({
+          status: 'Matched',
+          label: `Match Remaining Donor (${unitsCollected}/${unitsNeeded} Collected)`
+        });
+      }
+      if (profile?.role === 'Admin' || profile?.role === 'Manager') {
+        allowedNextStates.push({ status: 'Closed', label: 'Mark as Closed' });
+      }
     }
   }
 
@@ -286,31 +504,123 @@ export const RequestDetail = () => {
                 {updatingStatus ? 'Updating...' : `Transition from ${request.status}...`}
               </option>
               {allowedNextStates.map(st => (
-                <option key={st} value={st}>
-                  {`Mark as ${st}`}
+                <option key={st.status} value={st.status}>
+                  {st.label}
                 </option>
               ))}
             </select>
           )}
 
-          <button 
-            onClick={() => navigate(`/requests/${request.campId}/${request.id}/edit`)}
-            disabled={isTerminal}
-            className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm shadow-sm disabled:opacity-50"
-            title={isTerminal ? 'Cannot edit terminal request' : ''}
-          >
-            Edit Fields
-          </button>
+          {profile?.role !== 'Donor' && (
+            <button 
+              onClick={() => navigate(`/requests/${request.campId}/${request.id}/edit`)}
+              disabled={isTerminal}
+              className="px-4 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 font-medium text-sm shadow-sm disabled:opacity-50"
+              title={isTerminal ? 'Cannot edit terminal request' : ''}
+            >
+              Edit Fields
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Donor Match Consent Card */}
+      {profile?.role === 'Donor' && donorMatchStatus === 'pending_response' && (
+        <div className="bg-gradient-to-r from-indigo-600 to-indigo-800 text-white p-6 rounded-2xl shadow-lg border border-indigo-500 my-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="bg-white/20 p-3 rounded-xl backdrop-blur-sm">
+                <Activity size={26} className="text-white" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold">Match Response Required</h2>
+                  <span className="bg-amber-400 text-amber-950 font-bold text-xs uppercase px-2.5 py-0.5 rounded-full">
+                    Pending Your Consent
+                  </span>
+                </div>
+                <p className="text-indigo-100 text-sm mt-1">
+                  You have been matched as a compatible donor for this clinical requisition. Please confirm your availability to donate.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {donorActionMsg && (
+            <div className={`mt-4 p-3 rounded-lg text-sm font-medium ${
+              donorActionMsg.type === 'success' 
+                ? 'bg-emerald-500/20 border border-emerald-400 text-emerald-100' 
+                : 'bg-red-500/20 border border-red-400 text-red-100'
+            }`}>
+              {donorActionMsg.text}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 mt-5">
+            <button
+              onClick={() => handleDonorResponse('accept')}
+              disabled={respondingMatch}
+              className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-2.5 rounded-xl shadow-md transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer text-sm"
+            >
+              <CheckCircle2 size={18} />
+              {respondingMatch ? 'Confirming...' : 'Accept Match & Confirm Donation'}
+            </button>
+            <button
+              onClick={() => handleDonorResponse('decline')}
+              disabled={respondingMatch}
+              className="bg-white/10 hover:bg-white/20 text-white border border-white/30 font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-50 cursor-pointer text-sm"
+            >
+              {respondingMatch ? 'Processing...' : 'Decline Match'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {profile?.role === 'Donor' && donorMatchStatus === 'accepted' && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 p-5 rounded-2xl flex items-center gap-3.5 shadow-sm my-4">
+          <CheckCircle2 size={24} className="text-emerald-600 shrink-0" />
+          <div>
+            <h3 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">Match Accepted</h3>
+            <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
+              You have confirmed your availability for this donation request. Please proceed to the camp or contact the camp coordinator.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {profile?.role === 'Donor' && donorMatchStatus === 'declined' && (
+        <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-4 rounded-xl flex items-center gap-3 my-4">
+          <X size={20} className="text-slate-500 shrink-0" />
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Match Declined</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              You declined this match. Your match reservation was released and the system is finding a replacement donor.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Match Donor Prompt Modal/Inline */}
       {showMatchPrompt && (
         <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-6 shadow-sm mt-4">
-          <h3 className="text-lg font-bold text-indigo-900 dark:text-indigo-300 mb-2">Match Donor</h3>
-          <p className="text-sm text-indigo-700 dark:text-indigo-400 mb-4">
-            Enter the Donor UID you wish to match to this request. This action is atomic and prevents double-booking.
-          </p>
+          <div className="flex justify-between items-start mb-2">
+            <div>
+              <h3 className="text-lg font-bold text-indigo-900 dark:text-indigo-300">Match Donor</h3>
+              <p className="text-sm text-indigo-700 dark:text-indigo-400">
+                Select a compatible donor from the registered camp directory, or enter a UID manually. This action acquires an atomic lock to prevent double-booking.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomUidMode(!customUidMode);
+                setMatchWarning(null);
+              }}
+              className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 bg-white dark:bg-slate-800 px-2.5 py-1.5 rounded-md border border-indigo-200 dark:border-indigo-700 shadow-xs"
+            >
+              {customUidMode ? '📋 Switch to Dropdown' : '⌨️ Enter UID Manually'}
+            </button>
+          </div>
           
           {matchWarning && (
             <div className="mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 p-4 rounded-lg shadow-sm">
@@ -321,23 +631,68 @@ export const RequestDetail = () => {
             </div>
           )}
 
+          {/* Quick Select Dropdown */}
+          {!customUidMode ? (
+            <div className="mb-4">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1.5">
+                Compatible Registered Donors:
+              </label>
+              <select
+                value={donorUidToMatch}
+                onChange={(e) => {
+                  setDonorUidToMatch(e.target.value);
+                  setMatchWarning(null);
+                }}
+                disabled={updatingStatus || loadingDonorsList}
+                className="w-full rounded-lg border-indigo-300 dark:border-indigo-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm px-3.5 py-2.5 border bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
+              >
+                <option value="">
+                  {loadingDonorsList ? 'Loading donor directory...' : availableDonors.length === 0 ? '-- No registered donors found --' : '-- Choose a registered donor --'}
+                </option>
+                {availableDonors.map((d) => (
+                  <option key={d.uid} value={d.uid} disabled={!d.isCompatible}>
+                    {d.name} ({d.bloodGroupName}) — {d.isCompatible ? '✓ Compatible' : '✗ Incompatible'} {!d.bloodGroupVerified ? '⚠️ (Unverified)' : ''}
+                  </option>
+                ))}
+              </select>
+              {availableDonors.length === 0 && !loadingDonorsList && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  No registered donors found in database. Use "Enter UID Manually" to input an external donor ID.
+                </p>
+              )}
+            </div>
+          ) : (
+            /* Manual UID input mode */
+            <div className="mb-4">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1.5">
+                Manual Donor UID:
+              </label>
+              <input 
+                type="text" 
+                value={donorUidToMatch}
+                onChange={(e) => {
+                  setDonorUidToMatch(e.target.value);
+                  setMatchWarning(null);
+                }}
+                placeholder="Paste 28-character Firebase Donor UID"
+                className="w-full rounded-lg border-indigo-300 dark:border-indigo-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm px-3.5 py-2.5 border bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono"
+                disabled={updatingStatus}
+              />
+            </div>
+          )}
+
+          {donorUidToMatch && (
+            <div className="mb-4 text-xs text-indigo-700 dark:text-indigo-300 font-mono bg-indigo-100/60 dark:bg-indigo-950/40 px-3 py-1.5 rounded border border-indigo-200 dark:border-indigo-800">
+              Selected UID: <span className="font-bold">{donorUidToMatch}</span>
+            </div>
+          )}
+
           <div className="flex gap-3">
-            <input 
-              type="text" 
-              value={donorUidToMatch}
-              onChange={(e) => {
-                setDonorUidToMatch(e.target.value);
-                setMatchWarning(null);
-              }}
-              placeholder="Donor UID"
-              className="flex-1 rounded-md border-indigo-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-4 py-2 border bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
-              disabled={updatingStatus}
-            />
             {matchWarning ? (
               <button 
                 onClick={() => handleMatchDonor(true)}
                 disabled={updatingStatus || !donorUidToMatch.trim()}
-                className="px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
+                className="px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50 text-sm"
               >
                 {updatingStatus ? 'Acquiring lock...' : 'Proceed Anyway'}
               </button>
@@ -345,7 +700,7 @@ export const RequestDetail = () => {
               <button 
                 onClick={() => handleMatchDonor(false)}
                 disabled={updatingStatus || !donorUidToMatch.trim()}
-                className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm disabled:opacity-50"
+                className="px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 shadow-sm disabled:opacity-50 text-sm"
               >
                 {updatingStatus ? 'Acquiring lock...' : 'Confirm Match'}
               </button>
@@ -355,9 +710,10 @@ export const RequestDetail = () => {
                 setShowMatchPrompt(false);
                 setDonorUidToMatch('');
                 setMatchWarning(null);
+                setCustomUidMode(false);
               }}
               disabled={updatingStatus}
-              className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 font-medium disabled:opacity-50"
+              className="px-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 font-medium disabled:opacity-50 text-sm"
             >
               Cancel
             </button>
@@ -370,8 +726,15 @@ export const RequestDetail = () => {
         <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-6 shadow-sm mt-4">
           <h3 className="text-lg font-bold text-emerald-900 dark:text-emerald-300 mb-2">Donation-Day Verification</h3>
           <p className="text-sm text-emerald-700 dark:text-emerald-400 mb-4">
-            Verify the donor's blood group and enter the volume donated.
+            Verify the donor's identity, blood group, and enter the collection volume.
           </p>
+
+          {matchedDonorProfile && (
+            <div className="mb-4 p-3 bg-white dark:bg-slate-800 rounded-lg border border-emerald-200 dark:border-emerald-700 text-sm">
+              <div className="font-semibold text-slate-800 dark:text-slate-100">{matchedDonorProfile.name || 'Matched Donor'}</div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">{matchedDonorProfile.email} &bull; UID: {matchedDonorProfile.uid}</div>
+            </div>
+          )}
 
           <div className="space-y-4 mb-6">
             <div>
@@ -448,14 +811,20 @@ export const RequestDetail = () => {
           {/* Main flow */}
           {statusFlow.map((s, idx) => {
             let stateClass = "bg-slate-100 text-slate-400 border-2 border-white";
+            let label = s;
+            const isMatchStep = s === 'Matched';
+
             if (s === request.status) {
               stateClass = "bg-indigo-600 text-white shadow-md ring-4 ring-indigo-50";
-            } else if (!isUnfulfilled && currentIndex >= idx) {
+            } else if (isMatchStep && isPartiallyMatched) {
+              stateClass = "bg-amber-500 text-white shadow-md ring-4 ring-amber-100";
+              label = `Partially Matched (${request.unitsSecured || 1}/${request.unitsNeeded || 2})`;
+            } else if (!isUnfulfilled && (currentIndex >= idx || (isPartiallyMatched && idx <= 1))) {
               stateClass = "bg-indigo-100 text-indigo-600 border-2 border-white";
             }
             return (
               <div key={s} className={`relative z-10 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${stateClass}`}>
-                {s}
+                {label}
               </div>
             );
           })}
@@ -533,8 +902,22 @@ export const RequestDetail = () => {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Units Needed</label>
-                <div className="text-base text-slate-900">{request.unitsNeeded}</div>
+                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Units (Needed / Secured / Collected)</label>
+                <div className="text-base text-slate-900 flex items-center gap-2">
+                  <span className="font-semibold">{request.unitsNeeded} needed</span>
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {request.unitsSecured || 0} secured
+                  </span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    (request.unitsCollected || 0) >= request.unitsNeeded 
+                      ? 'bg-emerald-100 text-emerald-800' 
+                      : (request.unitsCollected || 0) > 0 
+                        ? 'bg-amber-100 text-amber-800' 
+                        : 'bg-slate-100 text-slate-700'
+                  }`}>
+                    {request.unitsCollected || 0} collected
+                  </span>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Urgency</label>
@@ -544,10 +927,58 @@ export const RequestDetail = () => {
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Hospital</label>
                 <div className="text-base text-slate-900">{hospitals[request.recipientHospitalId]?.name || request.recipientHospitalId}</div>
               </div>
-              {request.matchedDonorId && (
+
+              {/* Matched Donors Section */}
+              {matchedDonors.length > 0 && (
+                <div className="col-span-2 mt-2">
+                  <label className="block text-xs font-semibold text-indigo-700 uppercase tracking-wider mb-2">
+                    Matched Donors ({matchedDonors.length})
+                  </label>
+                  <div className="space-y-2">
+                    {matchedDonors.map((md) => (
+                      <div key={md.uid} className="flex items-center justify-between p-3.5 rounded-xl border border-slate-200 bg-slate-50/80">
+                        <div>
+                          <div className="font-semibold text-slate-900 text-sm">{md.name}</div>
+                          <div className="text-xs text-slate-500 font-mono mt-0.5">{md.email} &bull; UID: {md.uid}</div>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          {md.bloodGroup && (
+                            <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                              {bloodGroups[md.bloodGroup]?.name || md.bloodGroup}
+                            </span>
+                          )}
+                          <span className={`text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                            md.status === 'donated'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : md.status === 'accepted'
+                                ? 'bg-teal-100 text-teal-800 border border-teal-200'
+                                : md.status === 'pending_response'
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {md.status === 'donated' ? '✓ Donated & Verified' : md.status === 'accepted' ? '✓ Accepted' : md.status === 'pending_response' ? '⏳ Pending Response' : md.status}
+                          </span>
+                          {md.status === 'accepted' && (profile?.role === 'Manager' || profile?.role === 'Admin') && (
+                            <button
+                              type="button"
+                              onClick={() => handleInitiateDonation(md.uid)}
+                              disabled={updatingStatus}
+                              className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors cursor-pointer"
+                            >
+                              Record Donation
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {request.matchedDonorId && !matchedDonors.some(m => m.uid === request.matchedDonorId) && (
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-emerald-600 uppercase tracking-wider mb-1">Matched Donor UID</label>
-                  <div className="text-base font-bold text-slate-900 bg-emerald-50 p-3 rounded-lg border border-emerald-200">
+                  <div className="text-base font-bold text-slate-900 bg-emerald-50 p-3 rounded-lg border border-emerald-200 font-mono">
                     {request.matchedDonorId}
                   </div>
                 </div>

@@ -10,16 +10,23 @@ import { DashboardScreen } from './components/Dashboard/DashboardScreen';
 import { RequestsRouter } from './components/Requests/RequestsRouter';
 import { ReportsDashboard } from './components/Reports/ReportsDashboard';
 import { DonorHistoryView } from './components/Users/DonorHistoryView';
-
 import { RolesScreen } from './components/Administration/RolesScreen';
 import { SettingsScreen } from './components/Administration/SettingsScreen';
 import { HospitalRequisitionForm } from './components/Hospital/HospitalRequisitionForm';
-
-
+import { StorageInventoryScreen } from './components/Storage/StorageInventoryScreen';
+import { DonorActiveDispatchScreen } from './components/Donor/DonorActiveDispatchScreen';
 
 import { useAuth } from './contexts/AuthProvider';
+
 const RoleRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
-  const { profile } = useAuth();
+  const { profile, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
+      </div>
+    );
+  }
   if (!profile || !allowedRoles.includes(profile.role)) {
     return <Navigate to="/dashboard" replace />;
   }
@@ -41,12 +48,14 @@ const App = () => {
               <Route path="/dashboard" element={<DashboardScreen />} />
               <Route path="/masters/*" element={<MastersRouter />} />
               <Route path="/requests/*" element={<RequestsRouter />} />
-              <Route path="/history" element={<RoleRoute allowedRoles={['User']}><div className="p-4 lg:p-8"><DonorHistoryView /></div></RoleRoute>} />
-              <Route path="users" element={<RoleRoute allowedRoles={['Admin']}><UsersScreen /></RoleRoute>} />
+              <Route path="/history" element={<RoleRoute allowedRoles={['User', 'Donor']}><div className="p-4 lg:p-8"><DonorHistoryView /></div></RoleRoute>} />
+              <Route path="users" element={<RoleRoute allowedRoles={['Admin', 'Manager']}><UsersScreen /></RoleRoute>} />
               <Route path="reports" element={<RoleRoute allowedRoles={['Admin', 'Manager']}><ReportsDashboard /></RoleRoute>} />
               <Route path="/roles" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><RolesScreen /></div></RoleRoute>} />
               <Route path="/settings" element={<RoleRoute allowedRoles={['Admin']}><div className="p-4 lg:p-8"><SettingsScreen /></div></RoleRoute>} />
               <Route path="/hospital/new" element={<RoleRoute allowedRoles={['Hospital', 'Admin']}><HospitalRequisitionForm /></RoleRoute>} />
+              <Route path="/storage" element={<RoleRoute allowedRoles={['Storage', 'Admin']}><StorageInventoryScreen /></RoleRoute>} />
+              <Route path="/donor/active" element={<RoleRoute allowedRoles={['User', 'Donor']}><DonorActiveDispatchScreen /></RoleRoute>} />
               
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Route>
