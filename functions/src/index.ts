@@ -1610,6 +1610,17 @@ export const certifyStorageUnit = functions.https.onCall(async (request) => {
   updates[`inventory/units/${unitId}/certifiedAt`] = now;
   updates[`inventory/units/${unitId}/ttiLotNumbers`] = ttiLotNumbers;
 
+  // Move from Quarantine Dock into active Chiller Shelf
+  if (!unit.storageLocation || unit.storageLocation.toLowerCase().includes('quarantine')) {
+    updates[`inventory/units/${unitId}/storageLocation`] = 'Chiller-Shelf-C1';
+  }
+  if (unit.storageTemperatureCelsius === undefined) {
+    updates[`inventory/units/${unitId}/storageTemperatureCelsius`] = 4;
+  }
+  if (!unit.preservativeSolution) {
+    updates[`inventory/units/${unitId}/preservativeSolution`] = 'CPDA-1';
+  }
+
   // FEFO Index: /inventory/fefo/{group}_{component}/{expiryTimestamp}_{unitId}
   const expiryEpoch = new Date(unit.expiryDate).getTime();
   updates[`inventory/fefo/${labConfirmedBloodGroup}_${unit.componentType}/${expiryEpoch}_${unitId}`] = true;

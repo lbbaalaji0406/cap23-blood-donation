@@ -334,9 +334,13 @@ export const StorageInventoryScreen = () => {
                     </td>
                     <td className="px-6 py-4">{unit.componentType} ({unit.volumeMl}ml)</td>
                     <td className="px-6 py-4">
-                      <div className="text-xs text-slate-800 font-medium">{unit.storageLocation}</div>
+                      <div className="text-xs text-slate-800 font-medium">
+                        {unit.storageLocation?.includes('Quarantine') && unit.status === 'Certified'
+                          ? 'Chiller-Shelf-C1'
+                          : (unit.storageLocation || 'Chiller-Shelf-A1')}
+                      </div>
                       <div className="text-xs text-slate-500 flex items-center gap-1">
-                        <Thermometer size={12} /> {unit.storageTemperatureCelsius}°C ({unit.preservativeSolution})
+                        <Thermometer size={12} /> {unit.storageTemperatureCelsius ?? 4}°C ({unit.preservativeSolution || 'CPDA-1'})
                       </div>
                     </td>
                     <td className="px-6 py-4">

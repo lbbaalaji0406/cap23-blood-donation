@@ -276,6 +276,8 @@ async function run() {
     expiryDate: new Date(unit1ExpiryEpoch).toISOString(),
     status: "Certified",
     storageLocation: "Chiller-Shelf-A1",
+    storageTemperatureCelsius: 4,
+    preservativeSolution: "CPDA-1",
     sourceCampId: "CAMP001",
     enteredBy: adminUid,
     certifiedBy: storageUid,
@@ -296,6 +298,8 @@ async function run() {
     expiryDate: new Date(unit2ExpiryEpoch).toISOString(),
     status: "Certified",
     storageLocation: "Chiller-Shelf-B2",
+    storageTemperatureCelsius: 4,
+    preservativeSolution: "CPDA-1",
     sourceCampId: "CAMP001",
     enteredBy: adminUid,
     certifiedBy: storageUid,
@@ -315,6 +319,8 @@ async function run() {
     expiryDate: new Date(thirtyDaysAhead).toISOString(),
     status: "Quarantined",
     storageLocation: "Quarantine-Dock",
+    storageTemperatureCelsius: 4,
+    preservativeSolution: "CPDA-1",
     sourceCampId: "CAMP002",
     enteredBy: intakeUid
   });
