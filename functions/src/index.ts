@@ -1476,14 +1476,16 @@ export const intakeStorageUnit = functions.https.onCall(async (request) => {
 
   const db = admin.database();
 
-  // Guard against duplicate barcode intake
-  const existingUnitsSnap = await db.ref('inventory/units').orderByChild('bagBarcode').equalTo(bagBarcode).get();
+  // Guard against duplicate barcode intake (memory-safe and index-independent)
+  const existingUnitsSnap = await db.ref('inventory/units').get();
   if (existingUnitsSnap.exists()) {
     let hasActive = false;
     existingUnitsSnap.forEach((child) => {
       const u = child.val();
-      if (u.status === 'Quarantined' || u.status === 'Certified' || u.status === 'Stock_Reserved' || u.status === 'ISSUE_UNCONFIRMED') {
-        hasActive = true;
+      if (u && u.bagBarcode && u.bagBarcode.trim().toLowerCase() === bagBarcode.trim().toLowerCase()) {
+        if (u.status === 'Quarantined' || u.status === 'Certified' || u.status === 'Stock_Reserved' || u.status === 'ISSUE_UNCONFIRMED') {
+          hasActive = true;
+        }
       }
     });
     if (hasActive) {

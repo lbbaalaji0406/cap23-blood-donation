@@ -108,7 +108,10 @@
     "inventory": {
       ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'Admin' || root.child('users').child(auth.uid).child('role').val() == 'Storage')",
       ".write": "false",
-      ".indexOn": ["status", "bloodGroup", "componentType", "expiryDate"]
+      ".indexOn": ["status", "bloodGroup", "componentType", "expiryDate"],
+      "units": {
+        ".indexOn": ["bagBarcode", "status", "bloodGroup", "componentType", "expiryDate"]
+      }
     },
 
     "inventory_donor_ledger": {

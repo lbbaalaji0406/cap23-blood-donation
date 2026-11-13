@@ -96,7 +96,8 @@ export const StorageInventoryScreen = () => {
       setActionMessage({ text: 'Blood unit received into Quarantine! Awaiting lab TTI certification.', type: 'success' });
       fetchUnits();
     } catch (err: any) {
-      setActionMessage({ text: err.message || 'Intake failed', type: 'error' });
+      const msg = err.details?.message || err.details || err.message || 'Intake failed';
+      setActionMessage({ text: typeof msg === 'string' ? msg : JSON.stringify(msg), type: 'error' });
     } finally {
       setIsSubmittingIntake(false);
     }
