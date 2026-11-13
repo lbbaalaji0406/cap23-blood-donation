@@ -41,6 +41,12 @@ export const StorageInventoryScreen = () => {
   const [ttiMalaria, setTtiMalaria] = useState('LOT-MAL-2026-X1');
   const [ttiSyphilis, setTtiSyphilis] = useState('LOT-SYP-2026-X1');
 
+  // Loading / Submission Guards (prevent rapid multi-click duplicates)
+  const [isSubmittingIntake, setIsSubmittingIntake] = useState(false);
+  const [isSubmittingCertify, setIsSubmittingCertify] = useState(false);
+  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false);
+  const [isSubmittingReconcile, setIsSubmittingReconcile] = useState(false);
+
   // Return Modal
   const [returningUnit, setReturningUnit] = useState<StorageUnit | null>(null);
   const [returnTemp, setReturnTemp] = useState(6);
@@ -73,9 +79,11 @@ export const StorageInventoryScreen = () => {
 
   const handleIntakeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingIntake) return;
+    setIsSubmittingIntake(true);
     try {
       await storageService.intakeUnit({
-        bagBarcode: intakeBarcode || `BAG-${Date.now().toString().slice(-6)}`,
+        bagBarcode: intakeBarcode.trim() || `BAG-${Date.now().toString().slice(-6)}`,
         bloodGroup: intakeGroup,
         componentType: intakeComponent,
         volumeMl: Number(intakeVolume),
@@ -84,16 +92,20 @@ export const StorageInventoryScreen = () => {
         storageLocation: intakeLocation
       });
       setShowIntakeModal(false);
+      setIntakeBarcode('');
       setActionMessage({ text: 'Blood unit received into Quarantine! Awaiting lab TTI certification.', type: 'success' });
       fetchUnits();
     } catch (err: any) {
       setActionMessage({ text: err.message || 'Intake failed', type: 'error' });
+    } finally {
+      setIsSubmittingIntake(false);
     }
   };
 
   const handleCertifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!certifyingUnit) return;
+    if (!certifyingUnit || isSubmittingCertify) return;
+    setIsSubmittingCertify(true);
     try {
       await storageService.certifyUnit({
         unitId: certifyingUnit.unitId,
@@ -112,12 +124,15 @@ export const StorageInventoryScreen = () => {
       fetchUnits();
     } catch (err: any) {
       setActionMessage({ text: err.message || 'Certification failed (maker-checker check)', type: 'error' });
+    } finally {
+      setIsSubmittingCertify(false);
     }
   };
 
   const handleReturnSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!returningUnit) return;
+    if (!returningUnit || isSubmittingReturn) return;
+    setIsSubmittingReturn(true);
     try {
       const res = await storageService.processReturn({
         unitId: returningUnit.unitId,
@@ -129,6 +144,8 @@ export const StorageInventoryScreen = () => {
       fetchUnits();
     } catch (err: any) {
       setActionMessage({ text: err.message || 'Return processing failed', type: 'error' });
+    } finally {
+      setIsSubmittingReturn(false);
     }
   };
 
@@ -150,7 +167,8 @@ export const StorageInventoryScreen = () => {
 
   const handleReconcileSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reconcilingUnit) return;
+    if (!reconcilingUnit || isSubmittingReconcile) return;
+    setIsSubmittingReconcile(true);
     try {
       const res = await storageService.reconcileUnconfirmed({
         unitId: reconcilingUnit.unitId,
@@ -165,6 +183,8 @@ export const StorageInventoryScreen = () => {
       fetchUnits();
     } catch (err: any) {
       setActionMessage({ text: err.message || 'Reconciliation failed', type: 'error' });
+    } finally {
+      setIsSubmittingReconcile(false);
     }
   };
 
@@ -513,9 +533,17 @@ export const StorageInventoryScreen = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium"
+                  disabled={isSubmittingIntake}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2"
                 >
-                  Confirm Intake
+                  {isSubmittingIntake ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Receiving Bag...
+                    </>
+                  ) : (
+                    'Confirm Intake'
+                  )}
                 </button>
               </div>
             </form>
@@ -593,9 +621,17 @@ export const StorageInventoryScreen = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium"
+                  disabled={isSubmittingCertify}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2"
                 >
-                  Certify & Issue to Shelf
+                  {isSubmittingCertify ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Certifying...
+                    </>
+                  ) : (
+                    'Certify & Issue to Shelf'
+                  )}
                 </button>
               </div>
             </form>
@@ -732,11 +768,19 @@ export const StorageInventoryScreen = () => {
                 </button>
                 <button
                   type="submit"
-                  className={`px-4 py-2 text-white rounded-lg text-sm font-medium ${
+                  disabled={isSubmittingReconcile}
+                  className={`px-4 py-2 text-white rounded-lg text-sm font-medium flex items-center gap-2 ${
                     reconcileAction === 'restore' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
-                  }`}
+                  } disabled:opacity-50`}
                 >
-                  {reconcileAction === 'restore' ? 'Restore to FEFO Shelf' : 'Permanently Discard'}
+                  {isSubmittingReconcile ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Reconciling...
+                    </>
+                  ) : (
+                    reconcileAction === 'restore' ? 'Restore to FEFO Shelf' : 'Permanently Discard'
+                  )}
                 </button>
               </div>
             </form>

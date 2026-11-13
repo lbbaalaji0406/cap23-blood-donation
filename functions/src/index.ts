@@ -1475,6 +1475,22 @@ export const intakeStorageUnit = functions.https.onCall(async (request) => {
   }
 
   const db = admin.database();
+
+  // Guard against duplicate barcode intake
+  const existingUnitsSnap = await db.ref('inventory/units').orderByChild('bagBarcode').equalTo(bagBarcode).get();
+  if (existingUnitsSnap.exists()) {
+    let hasActive = false;
+    existingUnitsSnap.forEach((child) => {
+      const u = child.val();
+      if (u.status === 'Quarantined' || u.status === 'Certified' || u.status === 'Stock_Reserved' || u.status === 'ISSUE_UNCONFIRMED') {
+        hasActive = true;
+      }
+    });
+    if (hasActive) {
+      throw new functions.https.HttpsError('already-exists', `A blood bag with barcode "${bagBarcode}" is already in active inventory or quarantine.`);
+    }
+  }
+
   const unitRef = db.ref('inventory/units').push();
   const unitId = unitRef.key!;
 
