@@ -6,9 +6,10 @@ import { getCamps, getHospitals, getBloodGroups, getCompatibleDonorGroups } from
 import type { Camp, Hospital, BloodGroup } from '../../services/masterService';
 import { useAuth } from '../../contexts/AuthProvider';
 import { workflowService } from '../../services/workflowService';
+import { storageService } from '../../services/storageService';
 import { db } from '../../firebase';
 import { ref, get } from 'firebase/database';
-import { Activity, CheckCircle2, X } from 'lucide-react';
+import { Activity, CheckCircle2, X, Package, Users, UserCheck } from 'lucide-react';
 
 import { CommentsThread } from './CommentsThread';
 import { AttachmentsList } from './AttachmentsList';
@@ -67,6 +68,8 @@ export const RequestDetail = () => {
     bloodGroup?: string;
   }
   const [matchedDonors, setMatchedDonors] = useState<MatchedDonorInfo[]>([]);
+  const [isReservingStock, setIsReservingStock] = useState(false);
+  const [modeAMessage, setModeAMessage] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
   const fetchAll = async () => {
     try {
@@ -251,6 +254,44 @@ export const RequestDetail = () => {
       console.error("Failed to fetch donor profile", err);
     } finally {
       setLoadingDonor(false);
+    }
+  };
+
+  const handleModeAStockReservation = async () => {
+    if (!request || !campId) return;
+    setIsReservingStock(true);
+    setModeAMessage(null);
+    try {
+      const unitsRemaining = (request.unitsNeeded || 1) - (request.unitsSecured || 0);
+      const result = await storageService.reserveStock({
+        requestId: request.id,
+        campId: campId,
+        recipientBloodGroupId: request.blood_groupId,
+        componentType: request.componentType || 'WholeBlood',
+        unitsNeeded: unitsRemaining > 0 ? unitsRemaining : 1
+      });
+
+      if (result.mode === 'Mode_A') {
+        const barcodes = result.reservedUnits?.map((u: any) => u.bagBarcode).join(', ') || 'Certified Unit';
+        setModeAMessage({
+          type: 'success',
+          text: `Mode A Stock Allocated! Unit(s) [${barcodes}] reserved under FEFO with 10-minute scan timer. Physical dispatch ready at cold storage dock.`
+        });
+        await fetchAll();
+      } else {
+        setModeAMessage({
+          type: 'warning',
+          text: `Insufficient certified stock on chiller shelf (${result.reservedUnits?.length || 0}/${unitsRemaining} available). Please mobilize registered donors via Mode B.`
+        });
+      }
+    } catch (err: any) {
+      console.error('Mode A Stock Reservation Failed:', err);
+      setModeAMessage({
+        type: 'error',
+        text: err.message || 'Failed to allocate stock from cold storage.'
+      });
+    } finally {
+      setIsReservingStock(false);
     }
   };
 
@@ -599,6 +640,97 @@ export const RequestDetail = () => {
           </div>
         </div>
       )}
+
+      {/* Fulfillment Dispatch Console: Mode A (Chiller Stock) & Mode B (Volunteer Donors) */}
+      {(profile?.role === 'Manager' || profile?.role === 'Admin' || profile?.role === 'Storage') &&
+        (request?.status === 'Verified' || request?.status === 'Partially Matched') && (
+          <div className="bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-6 shadow-sm space-y-4 my-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Package size={20} className="text-indigo-600" />
+                  <span>Fulfillment Dispatch Console</span>
+                  <span className="text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 font-bold px-2.5 py-0.5 rounded-full">
+                    {Math.max(0, (request.unitsNeeded || 1) - (request.unitsSecured || 0))} unit(s) remaining
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-1">
+                  Select fulfillment strategy: allocate directly from certified cold storage stock (Mode A) or match registered camp donors (Mode B).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Mode A Option Card */}
+              <div className="border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div>
+                  <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-sm">
+                    <Package size={17} />
+                    <span>Mode A: Chiller Stock Fulfillment</span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                    Atomically allocates certified units from cold storage chillers under FEFO (First-Expiry-First-Out). Starts the 10-minute dispatch countdown timer.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleModeAStockReservation}
+                  disabled={isReservingStock}
+                  className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isReservingStock ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                      <span>Checking Shelves & Reserving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={16} />
+                      <span>Allocate from Chiller Stock (Mode A)</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Mode B Option Card */}
+              <div className="border border-purple-200 dark:border-purple-900/50 bg-purple-50/50 dark:bg-purple-950/20 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div>
+                  <div className="flex items-center gap-2 text-purple-700 dark:text-purple-400 font-bold text-sm">
+                    <Users size={17} />
+                    <span>Mode B: Live Volunteer Match</span>
+                  </div>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                    Query the registered donor directory to match compatible donors and dispatch an automated match response notification.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMatchPrompt(true);
+                    fetchAvailableDonors();
+                  }}
+                  className="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <UserCheck size={16} />
+                  <span>Match Volunteer Donor (Mode B)</span>
+                </button>
+              </div>
+            </div>
+
+            {modeAMessage && (
+              <div className={`p-3.5 rounded-xl text-xs font-semibold flex items-center gap-2.5 ${
+                modeAMessage.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
+              }`}>
+                <span>{modeAMessage.type === 'success' ? '✅' : '⚠️'}</span>
+                <span>{modeAMessage.text}</span>
+              </div>
+            )}
+          </div>
+        )}
 
       {/* Match Donor Prompt Modal/Inline */}
       {showMatchPrompt && (

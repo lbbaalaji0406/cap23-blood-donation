@@ -1664,8 +1664,8 @@ export const reserveStockUnits = functions.https.onCall(async (request) => {
   const db = admin.database();
   const callerSnap = await db.ref(`users/${auth.uid}`).get();
   const caller = callerSnap.val() || {};
-  if (caller.role !== 'Hospital' && caller.role !== 'Storage' && caller.role !== 'Admin') {
-    throw new functions.https.HttpsError('permission-denied', 'Only Hospital, Storage, or Admin can reserve stock units.');
+  if (caller.role !== 'Hospital' && caller.role !== 'Storage' && caller.role !== 'Admin' && caller.role !== 'Manager') {
+    throw new functions.https.HttpsError('permission-denied', 'Only Hospital, Storage, Manager, or Admin can reserve stock units.');
   }
 
   const { requestId, recipientBloodGroupId, componentType, unitsNeeded } = request.data || {};
@@ -1738,6 +1738,55 @@ export const reserveStockUnits = functions.https.onCall(async (request) => {
         timestamp: now,
         details: `Unit ${u.bagBarcode} atomically reserved for request ${requestId} (Deadline: 10m).`
       });
+    }
+  }
+
+  // Synchronize reservation status across Camp and Hospital queues
+  if (reservedUnits.length > 0) {
+    let targetCampId = request.data?.campId;
+    let targetHospitalId: string | null = null;
+    let currentUnitsNeeded = needed;
+    let currentUnitsSecured = 0;
+
+    if (!targetCampId) {
+      const campsSnap = await db.ref('masters/camp').get();
+      if (campsSnap.exists()) {
+        for (const cId of Object.keys(campsSnap.val())) {
+          const reqSnap = await db.ref(`transactions/donation_request/${cId}/${requestId}`).get();
+          if (reqSnap.exists()) {
+            targetCampId = cId;
+            const reqVal = reqSnap.val();
+            currentUnitsNeeded = reqVal.unitsNeeded || needed;
+            currentUnitsSecured = reqVal.unitsSecured || 0;
+            targetHospitalId = reqVal.recipientHospitalId || null;
+            break;
+          }
+        }
+      }
+    } else {
+      const reqSnap = await db.ref(`transactions/donation_request/${targetCampId}/${requestId}`).get();
+      if (reqSnap.exists()) {
+        const reqVal = reqSnap.val();
+        currentUnitsNeeded = reqVal.unitsNeeded || needed;
+        currentUnitsSecured = reqVal.unitsSecured || 0;
+        targetHospitalId = reqVal.recipientHospitalId || null;
+      }
+    }
+
+    if (targetCampId) {
+      const newSecured = currentUnitsSecured + reservedUnits.length;
+      const newStatus = newSecured >= currentUnitsNeeded ? 'Matched' : 'Partially Matched';
+      const rootUpdates: Record<string, any> = {};
+      rootUpdates[`transactions/donation_request/${targetCampId}/${requestId}/unitsSecured`] = newSecured;
+      rootUpdates[`transactions/donation_request/${targetCampId}/${requestId}/status`] = newStatus;
+      rootUpdates[`transactions/donation_request/${targetCampId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+
+      if (targetHospitalId) {
+        rootUpdates[`hospital_requests/${targetHospitalId}/${requestId}/unitsSecured`] = newSecured;
+        rootUpdates[`hospital_requests/${targetHospitalId}/${requestId}/status`] = newStatus;
+        rootUpdates[`hospital_requests/${targetHospitalId}/${requestId}/updatedAt`] = { '.sv': 'timestamp' };
+      }
+      await db.ref().update(rootUpdates);
     }
   }
 

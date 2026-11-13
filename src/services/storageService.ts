@@ -169,6 +169,7 @@ export const storageService = {
 
   reserveStock: async (data: {
     requestId: string;
+    campId?: string;
     recipientBloodGroupId: string;
     componentType: BloodComponentType;
     unitsNeeded: number;
