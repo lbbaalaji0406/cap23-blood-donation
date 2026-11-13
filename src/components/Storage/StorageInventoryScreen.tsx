@@ -31,6 +31,26 @@ export const StorageInventoryScreen = () => {
   const [intakeLocation, setIntakeLocation] = useState('Bay-A1');
   const [intakeTemp, setIntakeTemp] = useState(4);
 
+  const handleComponentChange = (comp: 'WholeBlood' | 'Platelets' | 'Plasma') => {
+    setIntakeComponent(comp);
+    if (comp === 'Platelets') {
+      setIntakeVolume(250);
+      setIntakePreservative('None');
+      setIntakeTemp(22);
+      setIntakeLocation('Agitator-Bay-1');
+    } else if (comp === 'Plasma') {
+      setIntakeVolume(250);
+      setIntakePreservative('None');
+      setIntakeTemp(-25);
+      setIntakeLocation('DeepFreezer-F1');
+    } else {
+      setIntakeVolume(350);
+      setIntakePreservative('CPDA-1');
+      setIntakeTemp(4);
+      setIntakeLocation('Bay-A1');
+    }
+  };
+
   // Certify Modal
   const [certifyingUnit, setCertifyingUnit] = useState<StorageUnit | null>(null);
   const [certLabGroup, setCertLabGroup] = useState('O_plus');
@@ -468,31 +488,61 @@ export const StorageInventoryScreen = () => {
                   <label className="block text-xs font-medium text-slate-700">Component</label>
                   <select
                     value={intakeComponent}
-                    onChange={(e) => setIntakeComponent(e.target.value as any)}
-                    className="w-full mt-1 px-3 py-2 border rounded-lg text-sm"
+                    onChange={(e) => handleComponentChange(e.target.value as any)}
+                    className="w-full mt-1 px-3 py-2 border rounded-lg text-sm font-medium"
                   >
-                    <option value="WholeBlood">Whole Blood</option>
-                    <option value="Platelets">Platelets</option>
-                    <option value="Plasma">Fresh Frozen Plasma</option>
+                    <option value="WholeBlood">Whole Blood (Red Cells)</option>
+                    <option value="Platelets">Platelets (Apheresis/Pooled)</option>
+                    <option value="Plasma">Fresh Frozen Plasma (FFP)</option>
                   </select>
                 </div>
               </div>
 
+              {/* Statutory Clinical Shelf-Life & Temperature Standards */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1">
+                <div className="font-semibold text-slate-700 flex items-center justify-between">
+                  <span>DGHS Statutory Shelf Life & Storage Guide:</span>
+                  <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {intakeComponent === 'Platelets'
+                      ? '5 Days'
+                      : intakeComponent === 'Plasma'
+                      ? '365 Days (1 Year)'
+                      : intakePreservative === 'SAGM'
+                      ? '42 Days'
+                      : '35 Days'}
+                  </span>
+                </div>
+                <p className="text-slate-500 text-[11px] leading-relaxed">
+                  {intakeComponent === 'Platelets' && 'Platelets must be stored at 20°C–24°C under continuous mechanical agitation. Viability is strictly 5 days from collection.'}
+                  {intakeComponent === 'Plasma' && 'Fresh Frozen Plasma (FFP) must be frozen within 8 hours and kept at ≤ -25°C. Valid for 1 year.'}
+                  {intakeComponent === 'WholeBlood' && `Whole blood stored at 2°C–6°C cold-chain chiller. Valid for ${intakePreservative === 'SAGM' ? '42 days with SAGM additive' : '35 days with CPDA-1 solution'}.`}
+                </p>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-700">Preservative</label>
+                  <label className="block text-xs font-medium text-slate-700">Preservative / Media</label>
                   <select
                     value={intakePreservative}
                     onChange={(e) => setIntakePreservative(e.target.value as any)}
                     className="w-full mt-1 px-3 py-2 border rounded-lg text-sm"
                   >
-                    <option value="CPDA-1">CPDA-1 (35d)</option>
-                    <option value="SAGM">SAGM (42d)</option>
-                    <option value="None">None (Platelets)</option>
+                    {intakeComponent === 'WholeBlood' && (
+                      <>
+                        <option value="CPDA-1">CPDA-1 (35 Days)</option>
+                        <option value="SAGM">SAGM Additive (42 Days)</option>
+                      </>
+                    )}
+                    {intakeComponent === 'Platelets' && (
+                      <option value="None">None / PAS (5 Days)</option>
+                    )}
+                    {intakeComponent === 'Plasma' && (
+                      <option value="None">None / Cryo-frozen (1 Year)</option>
+                    )}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-700">Storage Bay</label>
+                  <label className="block text-xs font-medium text-slate-700">Storage Bay / Equipment</label>
                   <input
                     type="text"
                     required

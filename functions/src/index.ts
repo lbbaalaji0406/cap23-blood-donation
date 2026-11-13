@@ -1499,7 +1499,7 @@ export const intakeStorageUnit = functions.https.onCall(async (request) => {
   // Default shelf life days per DGHS rules
   let shelfLifeDays = 35;
   if (componentType === 'Platelets') shelfLifeDays = 5;
-  else if (componentType === 'Plasma') shelfLifeDays = 90;
+  else if (componentType === 'Plasma') shelfLifeDays = 365;
   else if (preservativeSolution === 'SAGM') shelfLifeDays = 42;
 
   const now = Date.now();
