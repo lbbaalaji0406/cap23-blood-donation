@@ -386,9 +386,14 @@ export const StorageInventoryScreen = () => {
                     </td>
                     <td className="px-6 py-4">
                       {getExpiryBadge(unit.expiryDate)}
-                      <div className="text-[11px] text-slate-400 mt-0.5">
-                        {new Date(unit.expiryDate).toLocaleDateString()}
+                      <div className="text-[11px] font-medium text-slate-600 mt-1">
+                        Expires: {new Date(unit.expiryDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </div>
+                      {unit.collectionDate && (
+                        <div className="text-[10px] text-slate-400">
+                          Drawn: {new Date(unit.collectionDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
